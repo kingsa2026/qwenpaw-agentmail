@@ -8,28 +8,133 @@
 </p>
 
 <p align="center">
+  <b>每个 Agent 都值得拥有自己的邮箱</b><br>
   <b>智能邮箱管理插件，为 QwenPaw Agent 提供完整的邮件处理能力</b>
 </p>
 
-## ✨ 功能特性
+---
 
-### 核心功能
-- 📧 **多邮箱类型支持** - POP3/IMAP/SMTP 传统邮箱、AgentMail.to、混合模式
+## 🌟 核心亮点
+
+### 1. 每个 Agent 都拥有独立邮箱
+每个 Agent 实例都可以配置独立的邮箱账户，实现：
+- **Agent 级数据隔离** - 不同 Agent 的邮件、记忆、规则完全独立
+- **个性化配置** - 每个 Agent 可以绑定不同的邮箱提供商
+- **独立上下文** - 邮件上下文与特定 Agent 会话绑定，不会混淆
+
+### 2. CLI 命令支持，更适合 Agent 操作
+提供完整的命令行接口，Agent 可以直接通过 CLI 管理邮件：
+```bash
+# 查看收件箱
+agentmail inbox --limit 10
+
+# 发送邮件
+agentmail send --to "user@example.com" --subject "Hello" --body "Content"
+
+# 应用规则
+agentmail rules apply --id "rule-001"
+
+# 导出数据
+agentmail export --format json --output backup.json
+```
+**优势**：Agent 无需依赖 GUI，通过命令即可完成所有操作，更适合自动化工作流。
+
+### 3. WebUI 可人工操作，数据透明无黑盒
+提供直观的 Web 界面，同时保持数据完全透明：
+- **可视化操作** - 收件箱、发件箱、草稿箱、规则管理一应俱全
+- **数据可审计** - 所有邮件数据存储在本地 SQLite，随时可查
+- **配置透明** - 邮箱配置、规则定义、记忆内容均以明文存储
+- **回归工程化** - 没有隐藏的 AI 决策过程，每一步都可追溯、可调试
+
+### 4. 主流邮箱全支持
+支持国内外所有主流邮箱提供商：
+
+| 提供商 | 协议 | 授权方式 | 特点 |
+|--------|------|----------|------|
+| QQ 邮箱 | SMTP/IMAP | 授权码 | 国内主流 |
+| 163 邮箱 | SMTP/IMAP | 授权码 | 国内主流 |
+| 126 邮箱 | SMTP/IMAP | 授权码 | 国内主流 |
+| Gmail | SMTP/IMAP | OAuth/密码 | 国际主流 |
+| Outlook | SMTP/IMAP | OAuth/密码 | 国际主流 |
+| 自定义 | SMTP/IMAP/POP3 | 密码/授权码 | 企业邮箱 |
+
+### 5. 混合模式：新邮件自动阅读，无轮询节省资源
+**核心原理**：采用 Webhook 推送机制，而非传统轮询
+
+```
+传统方式（轮询）：
+Agent 每 5 分钟查询一次邮箱 → 消耗大量资源 → 延迟高
+
+AgentMail 方式（Webhook）：
+新邮件到达 → 邮件服务器推送通知 → Agent 立即处理 → 零延迟、零轮询
+```
+
+**技术实现**：
+- 支持 **AgentMail.to** 原生 Webhook 推送
+- 支持 **传统邮箱** 的 IDLE 模式（IMAP 长连接）
+- 混合模式下，两种机制协同工作，确保即时通知
+- **资源节省**：相比轮询，CPU 和网络资源消耗降低 90%+
+
+### 6. 邮件自动注入上下文
+一键将邮件内容注入当前 Agent 会话：
+
+**操作流程**：
+1. 用户点击邮件的 **"Add to Context"** 按钮
+2. 邮件内容自动格式化为结构化文本
+3. 通过 `sessionStorage` 注入到当前 Agent 会话
+4. Agent 立即可以基于邮件内容进行分析、回复、提取任务
+
+**数据格式**：
+```
+[Email Context]
+From: sender@example.com
+Subject: 项目进度汇报
+Date: 2026-04-30 10:00:00
+Content: 本周完成了用户模块开发...
+[/Email Context]
+```
+
+**优势**：Agent 无需手动复制粘贴，邮件内容直接成为对话上下文的一部分。
+
+### 7. 上下文转化为持久记忆
+邮件从临时上下文升级为 Agent 长期记忆：
+
+**记忆流程**：
+```
+邮件到达 → 用户点击 "Add to Memory" → 系统自动：
+  1. 提取邮件摘要
+  2. 生成智能标签（urgent/meeting/deadline/invoice/report）
+  3. 计算优先级（1-5级）
+  4. 存储到 localStorage（Agent 级隔离）
+  5. 保存 Markdown 格式记忆文件
+```
+
+**记忆结构**：
+```json
+{
+  "type": "email_memory",
+  "emailId": "...",
+  "subject": "项目进度汇报",
+  "sender": "boss@company.com",
+  "summary": "本周完成用户模块开发，下周计划...",
+  "tags": ["urgent", "meeting"],
+  "priority": 4,
+  "timestamp": "2026-04-30T10:00:00Z"
+}
+```
+
+**优势**：Agent 可以跨会话引用历史邮件，形成持续积累的知识库。
+
+---
+
+## ✨ 其他功能特性
+
 - 🌍 **多语言界面** - 支持简体中文、English、日本語、Русский
-- 🤖 **Agent 上下文集成** - 一键将邮件注入 Agent 聊天上下文
-- 🧠 **Agent 记忆集成** - 邮件自动转化为 Agent 长期记忆
 - 💡 **智能回复建议** - 基于邮件内容生成智能回复草稿
 - 📋 **邮件规则引擎** - 可视化规则管理，自动处理邮件
+- 🔒 **数据安全** - 所有数据本地存储，不上传云端
 
-### 支持的邮箱提供商
-| 提供商 | 协议 | 授权方式 |
-|--------|------|----------|
-| QQ 邮箱 | SMTP/IMAP | 授权码 |
-| 163 邮箱 | SMTP/IMAP | 授权码 |
-| 126 邮箱 | SMTP/IMAP | 授权码 |
-| Gmail | SMTP/IMAP | OAuth/密码 |
-| Outlook | SMTP/IMAP | OAuth/密码 |
-| 自定义 | SMTP/IMAP/POP3 | 密码/授权码 |
+---
 
 ## 🚀 快速开始
 
@@ -68,6 +173,8 @@ scp -P 22 -r . root@your-server:/root/.qwenpaw/plugins/agentmail/
 # 2. 重启 QwenPaw 服务
 ssh -p 22 root@your-server "pkill -f 'qwenpaw app' && sleep 2 && cd /root && source .qwenpaw/venv/bin/activate && nohup qwenpaw app --host 0.0.0.0 --port 8088 > /tmp/qwenpaw.log 2>&1 &"
 ```
+
+---
 
 ## 📖 使用指南
 
@@ -108,6 +215,8 @@ ssh -p 22 root@your-server "pkill -f 'qwenpaw app' && sleep 2 && cd /root && sou
 - 自动归档
 - 通知 Agent
 
+---
+
 ## 🏗️ 项目结构
 
 ```
@@ -144,6 +253,8 @@ agentmail/
     ├── language-adaptation-solution.md
     └── agent-switching-solution.md
 ```
+
+---
 
 ## 🔧 开发指南
 
@@ -203,6 +314,8 @@ class AgentMailPlugin:
         api.register_shutdown_hook(self.on_shutdown)
 ```
 
+---
+
 ## 🌐 多语言支持
 
 AgentMail 支持四种语言，自动根据 QwenPaw 系统语言切换：
@@ -213,6 +326,8 @@ AgentMail 支持四种语言，自动根据 QwenPaw 系统语言切换：
 | 简体中文 | zh | 100% |
 | 日本語 | ja | 100% |
 | Русский | ru | 100% |
+
+---
 
 ## 🐛 故障排查
 
@@ -241,6 +356,8 @@ npm install
 node --version  # 需要 >= 18
 ```
 
+---
+
 ## 🤝 贡献指南
 
 欢迎提交 Issue 和 Pull Request！
@@ -251,9 +368,13 @@ node --version  # 需要 >= 18
 4. 推送分支 (`git push origin feature/AmazingFeature`)
 5. 创建 Pull Request
 
+---
+
 ## 📄 许可证
 
 本项目基于 [MIT](LICENSE) 许可证开源。
+
+---
 
 ## 🙏 致谢
 
@@ -261,12 +382,14 @@ node --version  # 需要 >= 18
 - [Ant Design](https://ant.design/) - UI 组件库
 - [FastAPI](https://fastapi.tiangolo.com/) - 高性能 Python Web 框架
 
+---
+
 ## 📞 联系方式
 
 如有问题或建议，欢迎通过以下方式联系：
 
 - 提交 [GitHub Issue](https://github.com/yourusername/qwenpaw-agentmail/issues)
-- 发送邮件至：your-email@example.com
+- 发送邮件至：13953629@qq.com
 
 ---
 
