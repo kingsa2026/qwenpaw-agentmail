@@ -1,0 +1,21 @@
+{
+  "id": "agentmail",
+  "name": "AgentMail",
+  "version": "1.1.0",
+  "description": "邮箱管理插件，采用混合模式同时支持传统邮箱和AgentMail.to",
+  "author": "QwenPaw Team",
+  "entry": {
+    "backend": "plugin.py",
+    "frontend": "dist/index.js"
+  },
+  "dependencies": [
+    "fastapi>=0.104.0",
+    "uvicorn>=0.24.0"
+  ],
+  "min_version": "1.1.0",
+  "meta": {
+    "icon": "MailOutlined",
+    "category": "productivity",
+    "tags": ["email", "agentmail", "smtp", "imap", "pop3", "hybrid"]
+  }
+}
