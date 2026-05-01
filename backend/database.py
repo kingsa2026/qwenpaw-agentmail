@@ -7,25 +7,70 @@ Agent隔离的SQLite数据库管理 - 每个Agent独立数据库
 import sqlite3
 import json
 import os
+import re
+import base64
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from contextlib import contextmanager
 
+# 简单的敏感字段加密（使用 base64 + 异或混淆，生产环境建议使用 AES-256-GCM）
+_ENCRYPTION_KEY = os.environ.get("AGENTMAIL_KEY", "agentmail-default-key-2026").encode()
+
+def _encrypt_field(value: Optional[str]) -> Optional[str]:
+    """加密敏感字段"""
+    if not value:
+        return value
+    try:
+        data = value.encode('utf-8')
+        # 使用异或加密（简单保护，生产环境请使用 AES-256-GCM）
+        key = _ENCRYPTION_KEY
+        encrypted = bytearray()
+        for i, b in enumerate(data):
+            encrypted.append(b ^ key[i % len(key)])
+        return base64.b64encode(bytes(encrypted)).decode('ascii')
+    except Exception:
+        return value
+
+def _decrypt_field(value: Optional[str]) -> Optional[str]:
+    """解密敏感字段"""
+    if not value:
+        return value
+    try:
+        data = base64.b64decode(value.encode('ascii'))
+        key = _ENCRYPTION_KEY
+        decrypted = bytearray()
+        for i, b in enumerate(data):
+            decrypted.append(b ^ key[i % len(key)])
+        return bytes(decrypted).decode('utf-8')
+    except Exception:
+        return value
+
+
+import re
 
 class AgentDatabase:
     """Agent隔离的数据库管理器 - 每个Agent独立数据库文件"""
 
+    # 允许的 Agent ID 字符：字母、数字、下划线、连字符
+    _AGENT_ID_PATTERN = re.compile(r'^[a-zA-Z0-9_-]+$')
+
     def __init__(self, agent_id: str):
+        # 校验 Agent ID，防止路径遍历
+        if not agent_id or not self._AGENT_ID_PATTERN.match(agent_id):
+            raise ValueError("agent_id must contain only letters, numbers, underscores, and hyphens")
         self.agent_id = agent_id
         # Agent工作空间路径: ~/.qwenpaw/agents/{agent_id}/email/
         self.db_dir = Path.home() / ".qwenpaw" / "agents" / agent_id / "email"
-        self.db_dir.mkdir(parents=True, exist_ok=True)
+        self.db_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.db_path = self.db_dir / "agentmail.db"
         self.bak_dir = self.db_dir / "bak"
         self.files_dir = self.db_dir / "files"
-        self.bak_dir.mkdir(parents=True, exist_ok=True)
-        self.files_dir.mkdir(parents=True, exist_ok=True)
+        self.bak_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        self.files_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        # 设置数据库文件权限（仅所有者可读写）
+        if self.db_path.exists():
+            os.chmod(self.db_path, 0o600)
         self._init_db()
 
     def _init_db(self):
@@ -201,6 +246,7 @@ class AgentDatabase:
             existing = cursor.fetchone()
 
             # 混合模式配置: 同时包含传统邮箱和AgentMail配置
+            # 敏感字段加密存储
             fields = {
                 'provider': data.get('provider', 'custom'),
                 'email': data.get('email'),
@@ -208,15 +254,15 @@ class AgentDatabase:
                 'smtp_host': data.get('smtp', {}).get('host'),
                 'smtp_port': data.get('smtp', {}).get('port'),
                 'smtp_username': data.get('smtp', {}).get('username'),
-                'smtp_password': data.get('smtp', {}).get('password'),
+                'smtp_password': _encrypt_field(data.get('smtp', {}).get('password')),
                 'smtp_use_tls': data.get('smtp', {}).get('use_tls', True),
                 'receive_host': data.get('imap', {}).get('host'),
                 'receive_port': data.get('imap', {}).get('port'),
                 'receive_username': data.get('imap', {}).get('username'),
-                'receive_password': data.get('imap', {}).get('password'),
+                'receive_password': _encrypt_field(data.get('imap', {}).get('password')),
                 'receive_use_ssl': data.get('imap', {}).get('use_ssl', True),
                 'receive_protocol': data.get('receive_protocol', 'pop3'),
-                'api_key': data.get('api_key'),
+                'api_key': _encrypt_field(data.get('api_key')),
                 'inbox_id': data.get('inbox_id'),
                 'forwarding': data.get('forwarding', True),
             }
@@ -261,6 +307,7 @@ class AgentDatabase:
                 config_type = row_dict['config_type']
 
                 # 统一返回混合模式结构
+                # 敏感字段解密
                 config['hybrid'] = {
                     'provider': row_dict.get('provider', 'custom'),
                     'email': row_dict.get('email'),
@@ -270,17 +317,17 @@ class AgentDatabase:
                         'host': row_dict.get('smtp_host'),
                         'port': row_dict.get('smtp_port'),
                         'username': row_dict.get('smtp_username'),
-                        'password': row_dict.get('smtp_password'),
+                        'password': _decrypt_field(row_dict.get('smtp_password')),
                         'use_tls': bool(row_dict.get('smtp_use_tls', 1)),
                     },
                     'imap': {
                         'host': row_dict.get('receive_host'),
                         'port': row_dict.get('receive_port'),
                         'username': row_dict.get('receive_username'),
-                        'password': row_dict.get('receive_password'),
+                        'password': _decrypt_field(row_dict.get('receive_password')),
                         'use_ssl': bool(row_dict.get('receive_use_ssl', 1)),
                     },
-                    'api_key': row_dict.get('api_key'),
+                    'api_key': _decrypt_field(row_dict.get('api_key')),
                     'inbox_id': row_dict.get('inbox_id'),
                     'forwarding': bool(row_dict.get('forwarding', 1)),
                 }
@@ -810,11 +857,15 @@ class AgentDatabase:
 
     def clean_old_trash(self, days: int = 30) -> int:
         """清理过期回收站数据"""
+        # 校验 days 为整数，防止 SQL 注入
+        if not isinstance(days, int) or days < 1 or days > 3650:
+            raise ValueError("days must be an integer between 1 and 3650")
         with self._get_conn() as conn:
             cursor = conn.cursor()
+            # 使用参数绑定传递 days，避免 SQL 注入
             cursor.execute(
-                "DELETE FROM trash WHERE agent_id = ? AND deleted_at < datetime('now', '-{} days')".format(days),
-                (self.agent_id,)
+                "DELETE FROM trash WHERE agent_id = ? AND deleted_at < datetime('now', '-' || ? || ' days')",
+                (self.agent_id, str(days))
             )
             conn.commit()
             return cursor.rowcount

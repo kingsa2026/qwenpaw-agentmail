@@ -8,8 +8,6 @@ AgentMail Plugin - QwenPaw 标准插件入口
 """
 
 import logging
-import os
-import sys
 from pathlib import Path
 
 # 配置日志
@@ -50,6 +48,34 @@ class AgentMailPlugin:
             callback=self.on_shutdown,
             priority=100,
         )
+
+        # 注册 CLI 控制命令
+        try:
+            from .cli_commands import (
+                ListContactsCommand,
+                ShareContactsCommand,
+                ListInboxCommand,
+                ListSentCommand,
+                ListDraftsCommand,
+                ListTrashCommand,
+                BackupCommand,
+                ConfigCommand,
+                SendEmailCommand,
+                ReadEmailCommand,
+            )
+            api.register_control_command(ListContactsCommand(), priority_level=10)
+            api.register_control_command(ShareContactsCommand(), priority_level=10)
+            api.register_control_command(ListInboxCommand(), priority_level=10)
+            api.register_control_command(ListSentCommand(), priority_level=10)
+            api.register_control_command(ListDraftsCommand(), priority_level=10)
+            api.register_control_command(ListTrashCommand(), priority_level=10)
+            api.register_control_command(BackupCommand(), priority_level=10)
+            api.register_control_command(ConfigCommand(), priority_level=10)
+            api.register_control_command(SendEmailCommand(), priority_level=10)
+            api.register_control_command(ReadEmailCommand(), priority_level=10)
+            logger.info(f"[{self.id}] ✓ CLI 命令注册成功 (10 个命令)")
+        except Exception as e:
+            logger.warning(f"[{self.id}] CLI 命令注册失败: {e}")
 
         logger.info(f"[{self.id}] ✓ 插件注册成功")
         return True

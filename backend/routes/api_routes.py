@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import logging
 
-from ..database import get_db
+from database import get_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/email", tags=["email"])
@@ -163,8 +163,8 @@ async def get_sent(
 ):
     """获取发件箱"""
     db = get_db(agent_id)
-    # TODO: 实现发件箱查询
-    return {"success": True, "total": 0, "page": page, "page_size": page_size, "items": []}
+    result = db.get_sent(page=page, page_size=page_size)
+    return {"success": True, **result}
 
 
 # ── Drafts API ──────────────────────────────────────────────────────────────
@@ -177,8 +177,8 @@ async def get_drafts(
 ):
     """获取草稿箱"""
     db = get_db(agent_id)
-    # TODO: 实现草稿箱查询
-    return {"success": True, "total": 0, "page": page, "page_size": page_size, "items": []}
+    result = db.get_drafts(page=page, page_size=page_size)
+    return {"success": True, **result}
 
 
 # ── Trash API ───────────────────────────────────────────────────────────────
@@ -200,11 +200,8 @@ async def get_trash(
 async def restore_trash(agent_id: str, data: BatchIdsRequest):
     """从回收站恢复"""
     db = get_db(agent_id)
-    success_count = 0
-    for trash_id in data.ids:
-        if db.restore_from_trash(trash_id):
-            success_count += 1
-    return {"success": True, "restored": success_count}
+    result = db.restore_from_trash(data.ids)
+    return {"success": result, "restored": len(data.ids) if result else 0}
 
 
 @router.delete("/{agent_id}/trash/permanent")

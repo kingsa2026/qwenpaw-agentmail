@@ -184,6 +184,17 @@ Agent："您可以：
 Agent："请在 AgentMail 中使用搜索功能。如果找到相关邮件，可以添加到上下文，我可以帮您整理项目进展。"
 ```
 
+### 场景 5：CLI 批量共享联系人
+```
+用户："把联系人共享给其他 Agent"
+Agent："您可以使用 CLI 命令快速共享：
+1. 先查看联系人列表：`/agentmail-contacts`
+2. 共享指定联系人：`/agentmail-share --contacts 1,2,3 --agents agent-2,agent-3`
+3. 共享所有联系人：`/agentmail-share --all --agents agent-2`
+
+也可以直接在 Web 界面勾选联系人和目标 Agent 进行共享。"
+```
+
 ## 技术集成细节
 
 ### 上下文存储位置
@@ -224,6 +235,148 @@ Agent："请在 AgentMail 中使用搜索功能。如果找到相关邮件，可
    - 确认 Agent ID 正确
    - 检查 `localStorage` 空间是否已满
    - 建议清理旧记忆
+
+## CLI 命令参考
+
+AgentMail 提供完整的 CLI 控制命令，覆盖 UI 所有功能，Agent 可以直接在对话中使用：
+
+### 联系人管理
+
+#### /agentmail-contacts - 列出联系人
+```
+/agentmail-contacts                          # 列出所有联系人
+/agentmail-contacts --group default          # 按分组筛选
+/agentmail-contacts --search "张三"           # 搜索联系人
+```
+
+#### /agentmail-share - 共享联系人
+```
+/agentmail-share --contacts 1,2,3 --agents agent-2,agent-3    # 共享指定联系人
+/agentmail-share --all --agents agent-2                        # 共享所有联系人
+```
+
+**参数说明：**
+- `--contacts`: 要共享的联系人 ID，多个用逗号分隔
+- `--agents`: 目标 Agent ID，多个用逗号分隔
+- `--all`: 共享所有联系人（与 --contacts 互斥）
+
+### 邮件管理
+
+#### /agentmail-inbox - 收件箱
+```
+/agentmail-inbox                    # 列出收件箱邮件
+/agentmail-inbox --page 2           # 分页查看
+/agentmail-inbox --unread           # 仅显示未读
+/agentmail-inbox --search "项目"     # 搜索邮件
+```
+
+#### /agentmail-sent - 已发送
+```
+/agentmail-sent                     # 列出已发送邮件
+/agentmail-sent --page 2            # 分页查看
+/agentmail-sent --search "合同"      # 搜索邮件
+```
+
+#### /agentmail-drafts - 草稿箱
+```
+/agentmail-drafts                   # 列出草稿
+/agentmail-drafts --page 2          # 分页查看
+```
+
+#### /agentmail-read - 读取邮件
+```
+/agentmail-read --id 123                      # 查看邮件详情
+/agentmail-read --id 123 --action context     # 添加到上下文
+/agentmail-read --id 123 --action memory      # 添加到记忆
+```
+
+#### /agentmail-send - 发送邮件
+```
+/agentmail-send --to user@example.com --subject "Hello" --body "Content"
+/agentmail-send --to user@example.com --subject "Hello" --body-file /path/to/content.txt
+```
+
+### 回收站管理
+
+#### /agentmail-trash - 回收站
+```
+/agentmail-trash                          # 列出回收站
+/agentmail-trash --page 2                 # 分页查看
+/agentmail-trash --restore 1,2,3          # 恢复项目
+/agentmail-trash --delete 1,2,3           # 永久删除
+```
+
+### 备份与配置
+
+#### /agentmail-backup - 备份
+```
+/agentmail-backup                         # 创建备份
+/agentmail-backup --list                  # 列出备份
+```
+
+#### /agentmail-config - 配置
+```
+/agentmail-config                         # 查看当前配置
+/agentmail-config --set-mode hybrid       # 切换到混合模式
+/agentmail-config --set-mode traditional  # 切换到传统邮箱
+/agentmail-config --set-mode agentmail    # 切换到 AgentMail.to
+```
+
+### CLI 使用示例
+
+**场景 1：查看并共享联系人**
+```
+用户："把张三和李四的联系方式给 Agent-2"
+Agent："我来帮您共享。先确认一下联系人 ID..."
+
+[执行 /agentmail-contacts --search "张三"]
+
+Agent："找到张三 (ID:1) 和李四 (ID:2)，现在共享给 agent-2："
+
+[执行 /agentmail-share --contacts 1,2 --agents agent-2]
+
+Agent："已成功共享！张三和李四的联系人信息现在 agent-2 也可以使用了。"
+```
+
+**场景 2：查看邮件并添加到上下文**
+```
+用户："帮我看看那封关于项目的邮件"
+Agent："我先查找一下相关邮件..."
+
+[执行 /agentmail-inbox --search "项目"]
+
+Agent："找到一封邮件 (ID: 5)，让我查看详情："
+
+[执行 /agentmail-read --id 5]
+
+Agent："这封邮件是关于项目进度的... 需要我添加到上下文帮您分析吗？"
+
+[执行 /agentmail-read --id 5 --action context]
+```
+
+**场景 3：发送邮件**
+```
+用户："给张三发一封邮件，告诉他会议改到明天"
+Agent："好的，我来发送邮件。"
+
+[执行 /agentmail-send --to zhangsan@example.com --subject "会议时间变更" --body "张三，明天的会议改到下午2点，请知悉。"]
+
+Agent："邮件已发送成功！"
+```
+
+**场景 4：管理回收站**
+```
+用户："恢复昨天删除的那封邮件"
+Agent："我先查看回收站..."
+
+[执行 /agentmail-trash]
+
+Agent："找到删除的邮件 (ID: 8)，现在恢复："
+
+[执行 /agentmail-trash --restore 8]
+
+Agent："邮件已恢复到收件箱。"
+```
 
 ## 高级功能
 

@@ -46,13 +46,23 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# CORS配置
+# CORS配置 - 生产环境应指定具体域名
+def _get_cors_origins():
+    """获取允许的 CORS 来源"""
+    env_origins = os.environ.get("AGENTMAIL_CORS_ORIGINS", "")
+    if env_origins:
+        return [origin.strip() for origin in env_origins.split(",") if origin.strip()]
+    # 默认只允许本地开发环境
+    return ["http://localhost:3000", "http://127.0.0.1:3000"]
+
+_cors_origins = _get_cors_origins()
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization", "X-Request-ID"],
 )
 
 # 注册路由

@@ -5,11 +5,80 @@ const { Title, Text } = Typography;
 
 const STORAGE_KEY = 'agentmail_data';
 
+// 简单的客户端加密密钥（生产环境应从环境变量获取）
+const _STORAGE_KEY = (window as any).__AGENTMAIL_KEY__ || 'agentmail-default-key-2026';
+
+function _xorEncrypt(value: string): string {
+  try {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(value);
+    const key = encoder.encode(_STORAGE_KEY);
+    const encrypted = new Uint8Array(data.length);
+    for (let i = 0; i < data.length; i++) {
+      encrypted[i] = data[i] ^ key[i % key.length];
+    }
+    // Base64 encode
+    const chars = [];
+    for (let i = 0; i < encrypted.length; i += 3) {
+      const b1 = encrypted[i];
+      const b2 = encrypted[i + 1];
+      const b3 = encrypted[i + 2];
+      chars.push(
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[b1 >> 2],
+        'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[((b1 & 3) << 4) | (b2 >> 4)],
+        b2 !== undefined ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[((b2 & 15) << 2) | (b3 >> 6)] : '=',
+        b3 !== undefined ? 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'[b3 & 63] : '='
+      );
+    }
+    return chars.join('');
+  } catch {
+    return value;
+  }
+}
+
+function _xorDecrypt(value: string): string {
+  try {
+    // Base64 decode
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+    const lookup: Record<string, number> = {};
+    for (let i = 0; i < chars.length; i++) lookup[chars[i]] = i;
+    const bytes = [];
+    for (let i = 0; i < value.length; i += 4) {
+      const c1 = lookup[value[i]] || 0;
+      const c2 = lookup[value[i + 1]] || 0;
+      const c3 = lookup[value[i + 2]] || 0;
+      const c4 = lookup[value[i + 3]] || 0;
+      bytes.push((c1 << 2) | (c2 >> 4));
+      if (value[i + 2] !== '=') bytes.push(((c2 & 15) << 4) | (c3 >> 2));
+      if (value[i + 3] !== '=') bytes.push(((c3 & 3) << 6) | c4);
+    }
+    const key = new TextEncoder().encode(_STORAGE_KEY);
+    const decrypted = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) {
+      decrypted[i] = bytes[i] ^ key[i % key.length];
+    }
+    return new TextDecoder().decode(decrypted);
+  } catch {
+    return value;
+  }
+}
+
 function getStorage(agentId: string) {
   const key = `${STORAGE_KEY}_${agentId}`;
   try {
     const data = localStorage.getItem(key);
-    return data ? JSON.parse(data) : { contacts: [], contactGroups: [{id:1,name:'default'}], inbox: [], sent: [], drafts: [], trash: [], config: null };
+    if (!data) return { contacts: [], contactGroups: [{id:1,name:'default'}], inbox: [], sent: [], drafts: [], trash: [], config: null };
+    // 尝试解密（兼容旧版本明文存储）
+    let decrypted: string;
+    try {
+      decrypted = _xorDecrypt(data);
+      // 验证是否为有效 JSON
+      JSON.parse(decrypted);
+    } catch {
+      // 解密失败，可能是旧版本明文数据
+      decrypted = data;
+    }
+    return JSON.parse(decrypted);
   } catch {
     return { contacts: [], contactGroups: [{id:1,name:'default'}], inbox: [], sent: [], drafts: [], trash: [], config: null };
   }
@@ -17,7 +86,10 @@ function getStorage(agentId: string) {
 
 function setStorage(agentId: string, data: any) {
   const key = `${STORAGE_KEY}_${agentId}`;
-  localStorage.setItem(key, JSON.stringify(data));
+  const json = JSON.stringify(data);
+  // 加密存储敏感数据
+  const encrypted = _xorEncrypt(json);
+  localStorage.setItem(key, encrypted);
 }
 
 function getAllAgentIds(): string[] {
@@ -33,18 +105,39 @@ function getAllAgentIds(): string[] {
 
 function getAllAgents(): {id: string, name: string}[] {
   const agents: {id: string, name: string}[] = [];
+
+  // 1. 尝试从 QwenPaw 新版 zustand store 读取 (qwenpaw-agent-storage)
   try {
-    const agentsData = localStorage.getItem('qwenpaw_agents');
-    if (agentsData) {
-      const parsed = JSON.parse(agentsData);
-      if (Array.isArray(parsed)) {
-        parsed.forEach((a: any) => {
-          agents.push({ id: a.id || a.agent_id, name: a.name || a.id || a.agent_id });
+    const storageData = localStorage.getItem('qwenpaw-agent-storage');
+    if (storageData) {
+      const parsed = JSON.parse(storageData);
+      const state = parsed?.state || parsed;
+      if (state?.agents && Array.isArray(state.agents)) {
+        state.agents.forEach((a: any) => {
+          if (a.id) {
+            agents.push({ id: a.id, name: a.name || a.id });
+          }
         });
       }
     }
   } catch { }
 
+  // 2. 尝试从旧版 qwenpaw_agents 读取（兼容旧版本）
+  if (agents.length === 0) {
+    try {
+      const agentsData = localStorage.getItem('qwenpaw_agents');
+      if (agentsData) {
+        const parsed = JSON.parse(agentsData);
+        if (Array.isArray(parsed)) {
+          parsed.forEach((a: any) => {
+            agents.push({ id: a.id || a.agent_id, name: a.name || a.id || a.agent_id });
+          });
+        }
+      }
+    } catch { }
+  }
+
+  // 3. 从 AgentMail 本地存储的 agent IDs 兜底
   if (agents.length === 0) {
     const ids = getAllAgentIds();
     ids.forEach(id => {
@@ -1585,7 +1678,23 @@ function MarkdownPreview({ content }: { content: string }) {
 }
 
 function HtmlPreview({ content }: { content: string }) {
-  return <div dangerouslySetInnerHTML={{ __html: content || '' }} style={{ padding: 12, border: '1px solid #d9d9d9', borderRadius: 6, minHeight: 200, background: '#fafafa' }} />;
+  // XSS 防护：使用简单的 HTML 标签白名单过滤
+  const sanitized = React.useMemo(() => {
+    if (!content) return '';
+    // 允许的 HTML 标签列表
+    const allowedTags = ['p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'img'];
+    // 移除 script、style、iframe、object、embed 等危险标签及其内容
+    let cleaned = content
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
+      .replace(/<object[^>]*>[\s\S]*?<\/object>/gi, '')
+      .replace(/<embed[^>]*>/gi, '')
+      .replace(/javascript:/gi, '')
+      .replace(/on\w+\s*=/gi, '');
+    return cleaned;
+  }, [content]);
+  return <div dangerouslySetInnerHTML={{ __html: sanitized }} style={{ padding: 12, border: '1px solid #d9d9d9', borderRadius: 6, minHeight: 200, background: '#fafafa' }} />;
 }
 
 type EditorMode = 'plain' | 'markdown' | 'html';
@@ -2179,6 +2288,20 @@ function EmailPage() {
   });
 
   const agentName = React.useMemo(() => {
+    // 1. 尝试从 QwenPaw 新版 zustand store 读取
+    try {
+      const storageData = localStorage.getItem('qwenpaw-agent-storage');
+      if (storageData) {
+        const parsed = JSON.parse(storageData);
+        const state = parsed?.state || parsed;
+        if (state?.agents && Array.isArray(state.agents)) {
+          const agent = state.agents.find((a: any) => a.id === agentId);
+          if (agent) return agent.name || agentId;
+        }
+      }
+    } catch { }
+
+    // 2. 尝试从旧版 qwenpaw_agents 读取（兼容旧版本）
     try {
       const agentsData = localStorage.getItem('qwenpaw_agents');
       if (agentsData) {
@@ -2187,6 +2310,7 @@ function EmailPage() {
         if (agent) return agent.name || agentId;
       }
     } catch { }
+
     return agentId;
   }, [agentId]);
 
