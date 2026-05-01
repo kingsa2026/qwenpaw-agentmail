@@ -26,7 +26,8 @@ STORAGE_KEY = "agentmail_data"
 def _get_agent_storage(agent_id: str) -> Dict[str, Any]:
     """获取指定 Agent 的本地存储数据"""
     storage_key = f"{STORAGE_KEY}_{agent_id}"
-    storage_path = Path.home() / ".qwenpaw" / "agentmail" / f"{storage_key}.json"
+    # 存储路径: ~/.qwenpaw/agents/{agent_id}/mail/cli_storage.json
+    storage_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{storage_key}.json"
 
     if storage_path.exists():
         try:
@@ -51,10 +52,11 @@ def _get_agent_storage(agent_id: str) -> Dict[str, Any]:
 def _save_agent_storage(agent_id: str, data: Dict[str, Any]) -> bool:
     """保存指定 Agent 的本地存储数据"""
     storage_key = f"{STORAGE_KEY}_{agent_id}"
-    storage_path = Path.home() / ".qwenpaw" / "agentmail" / f"{storage_key}.json"
+    # 存储路径: ~/.qwenpaw/agents/{agent_id}/mail/cli_storage.json
+    storage_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{storage_key}.json"
 
     try:
-        storage_path.parent.mkdir(parents=True, exist_ok=True)
+        storage_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         with open(storage_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
         return True
@@ -520,7 +522,8 @@ class BackupCommand:
         list_mode = args.get("list", False)
 
         backups_key = f"{STORAGE_KEY}_{agent_id}_backups"
-        backups_path = Path.home() / ".qwenpaw" / "agentmail" / f"{backups_key}.json"
+        # 备份路径: ~/.qwenpaw/agents/{agent_id}/mail/backups.json
+        backups_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{backups_key}.json"
 
         if list_mode:
             if backups_path.exists():
@@ -567,7 +570,7 @@ class BackupCommand:
             backups = backups[-10:]
 
         try:
-            backups_path.parent.mkdir(parents=True, exist_ok=True)
+            backups_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with open(backups_path, "w", encoding="utf-8") as f:
                 json.dump(backups, f, ensure_ascii=False, indent=2)
             return (
@@ -785,9 +788,10 @@ class ReadEmailCommand:
             )
 
         if action == "memory":
-            # 添加到记忆（localStorage）
+            # 添加到记忆
             memory_key = f"agentmail_memory_{agent_id}"
-            memory_path = Path.home() / ".qwenpaw" / "agentmail" / f"{memory_key}.json"
+            # 记忆路径: ~/.qwenpaw/agents/{agent_id}/mail/memory.json
+            memory_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{memory_key}.json"
 
             memories = []
             if memory_path.exists():
@@ -812,7 +816,7 @@ class ReadEmailCommand:
                 memories = memories[-100:]
 
             try:
-                memory_path.parent.mkdir(parents=True, exist_ok=True)
+                memory_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                 with open(memory_path, "w", encoding="utf-8") as f:
                     json.dump(memories, f, ensure_ascii=False, indent=2)
                 return f"**AgentMail**: 已添加到记忆！\n\n邮件: {email.get('subject', '无主题')}"

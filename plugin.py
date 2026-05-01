@@ -4,7 +4,7 @@ AgentMail Plugin - QwenPaw 标准插件入口
 
 必须导出 `plugin` 对象，QwenPaw 加载器会调用 plugin.register(api)
 采用混合模式：同时支持传统邮箱(SMTP/POP3/IMAP)和AgentMail.to API
-每个Agent拥有独立的数据库，路径: ~/.qwenpaw/agents/{agent_id}/email/
+每个Agent拥有独立的数据库，路径: ~/.qwenpaw/agents/{agent_id}/mail/
 """
 
 import logging
@@ -90,8 +90,8 @@ class AgentMailPlugin:
         logger.info(f"[{self.id}] 插件目录: {plugin_dir}")
 
         # Agent数据库会自动在首次访问时创建
-        # 路径: ~/.qwenpaw/agents/{agent_id}/email/agentmail.db
-        logger.info(f"[{self.id}] Agent数据库路径: ~/.qwenpaw/agents/{{agent_id}}/email/")
+        # 路径: ~/.qwenpaw/agents/{agent_id}/mail/agentmail.db
+        logger.info(f"[{self.id}] Agent数据库路径: ~/.qwenpaw/agents/{{agent_id}}/mail/")
 
         logger.info(f"[{self.id}] ✓ 初始化完成")
 

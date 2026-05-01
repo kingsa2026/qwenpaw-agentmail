@@ -60,8 +60,8 @@ class AgentDatabase:
         if not agent_id or not self._AGENT_ID_PATTERN.match(agent_id):
             raise ValueError("agent_id must contain only letters, numbers, underscores, and hyphens")
         self.agent_id = agent_id
-        # Agent工作空间路径: ~/.qwenpaw/agents/{agent_id}/email/
-        self.db_dir = Path.home() / ".qwenpaw" / "agents" / agent_id / "email"
+        # Agent工作空间路径: ~/.qwenpaw/agents/{agent_id}/mail/
+        self.db_dir = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail"
         self.db_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.db_path = self.db_dir / "agentmail.db"
         self.bak_dir = self.db_dir / "bak"
@@ -934,7 +934,7 @@ def get_all_agent_dbs() -> Dict[str, AgentDatabase]:
     for agent_dir in agents_dir.iterdir():
         if agent_dir.is_dir():
             agent_id = agent_dir.name
-            db_path = agent_dir / "email" / "agentmail.db"
+            db_path = agent_dir / "mail" / "agentmail.db"
             if db_path.exists():
                 dbs[agent_id] = get_db(agent_id)
     return dbs

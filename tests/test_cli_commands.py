@@ -111,7 +111,8 @@ class TestAgentStorage:
 
     def test_get_storage_logs_warning_on_corrupted_json(self, temp_home, caplog):
         agent_id = "bad-agent"
-        storage_path = temp_home / ".qwenpaw" / "agentmail" / f"{STORAGE_KEY}_{agent_id}.json"
+        # 新路径: ~/.qwenpaw/agents/{agent_id}/mail/
+        storage_path = temp_home / ".qwenpaw" / "agents" / agent_id / "mail" / f"{STORAGE_KEY}_{agent_id}.json"
         storage_path.parent.mkdir(parents=True, exist_ok=True)
         storage_path.write_text("not-json", encoding="utf-8")
 
@@ -445,8 +446,8 @@ class TestReadEmailCommand:
         result = await cmd.handle(mock_context)
         assert "已添加到记忆" in result
 
-        # 验证记忆文件已写入
-        memory_path = temp_home / ".qwenpaw" / "agentmail" / f"agentmail_memory_{mock_context.agent_id}.json"
+        # 验证记忆文件已写入 (新路径: ~/.qwenpaw/agents/{agent_id}/mail/)
+        memory_path = temp_home / ".qwenpaw" / "agents" / mock_context.agent_id / "mail" / f"agentmail_memory_{mock_context.agent_id}.json"
         assert memory_path.exists()
         memories = json.loads(memory_path.read_text(encoding="utf-8"))
         assert len(memories) == 1
@@ -496,7 +497,8 @@ class TestBackupCommand:
             })
             await cmd.handle(mock_context)
 
-        backups_path = temp_home / ".qwenpaw" / "agentmail" / f"{STORAGE_KEY}_{mock_context.agent_id}_backups.json"
+        # 备份路径: ~/.qwenpaw/agents/{agent_id}/mail/
+        backups_path = temp_home / ".qwenpaw" / "agents" / mock_context.agent_id / "mail" / f"{STORAGE_KEY}_{mock_context.agent_id}_backups.json"
         backups = json.loads(backups_path.read_text(encoding="utf-8"))
         assert len(backups) == 10
 
