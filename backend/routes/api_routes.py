@@ -305,3 +305,14 @@ async def delete_contact_group(agent_id: str, group_id: int):
     db = get_db(agent_id)
     result = db.delete_contact_group(group_id)
     return {"success": result}
+
+
+# ── Uninstall API ───────────────────────────────────────────────────────────
+
+@router.post("/{agent_id}/uninstall")
+async def uninstall_plugin(agent_id: str, data: Dict[str, Any]):
+    """卸载插件 - 清理数据库和文件"""
+    db = get_db(agent_id)
+    keep_data = data.get("keep_data", False)
+    result = db.uninstall(keep_data=keep_data)
+    return {"success": result}

@@ -2579,12 +2579,19 @@ function EmailPage() {
         message.success(`${t('email.dataExported')} memory/${memoryKey}`);
       }
 
+      // 调用后端 API 清理数据库文件
+      try {
+        await apiPost(`/${targetAgentId}/uninstall`, { keep_data: keepData }, targetAgentId);
+      } catch (apiErr) {
+        console.warn('Backend uninstall API failed:', apiErr);
+      }
+
       if (!keepData) {
-        // 删除所有数据
+        // 删除前端 localStorage 数据
         const keysToRemove: string[] = [];
         for (let i = 0; i < localStorage.length; i++) {
           const key = localStorage.key(i);
-          if (key && key.startsWith(`${STORAGE_KEY}_${targetAgentId}`)) {
+          if (key && (key.startsWith(`${STORAGE_KEY}_${targetAgentId}`) || key.startsWith(`agentmail_rules_${targetAgentId}`) || key.startsWith(`agentmail_export_${targetAgentId}`))) {
             keysToRemove.push(key);
           }
         }
@@ -2592,8 +2599,10 @@ function EmailPage() {
       }
 
       message.success(t('email.uninstallSuccess'));
-      // 刷新页面
-      window.location.reload();
+      // 延迟刷新页面，确保消息显示
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
     } catch (e) {
       message.error('Uninstall failed');
     }

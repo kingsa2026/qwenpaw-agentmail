@@ -912,6 +912,26 @@ class AgentDatabase:
             })
         return backups
 
+    def uninstall(self, keep_data: bool = False) -> bool:
+        """卸载插件 - 清理数据库和文件"""
+        import shutil
+        try:
+            if not keep_data:
+                # 删除整个 mail 目录
+                if self.db_dir.exists():
+                    shutil.rmtree(str(self.db_dir))
+            else:
+                # 只删除数据库文件，保留 bak 和 files
+                if self.db_path.exists():
+                    self.db_path.unlink()
+            # 从缓存中移除
+            if self.agent_id in _db_cache:
+                del _db_cache[self.agent_id]
+            return True
+        except Exception as e:
+            logger.error(f"卸载失败: {e}")
+            return False
+
 
 # 全局数据库实例缓存
 _db_cache: Dict[str, AgentDatabase] = {}
