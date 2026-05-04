@@ -1,9 +1,31 @@
 const { React, antd, antdIcons, i18n } = (window as any).QwenPaw.host;
 const { Card, Button, Tabs, Table, Badge, Space, Tag, Typography, Empty, Modal, Form, Input, InputNumber, Switch, Select, message, Spin, Divider, Alert, Checkbox, Pagination, Popconfirm, Row, Col, Avatar, Tooltip, Radio, Upload } = antd;
-const { MailOutlined, InboxOutlined, SendOutlined, EditOutlined, SettingOutlined, ReloadOutlined, PlusOutlined, SaveOutlined, ApiOutlined, DeleteOutlined, UserOutlined, TeamOutlined, SearchOutlined, UndoOutlined, CheckOutlined, CloseOutlined, ShareAltOutlined, FolderOpenOutlined, RestOutlined, LinkOutlined, FileOutlined, EyeOutlined, DownloadOutlined, CloudUploadOutlined, BoldOutlined, ItalicOutlined, UnderlineOutlined, StrikethroughOutlined, OrderedListOutlined, UnorderedListOutlined, BgColorsOutlined, FontColorsOutlined, ClearOutlined, RedoOutlined, RollbackOutlined, PictureOutlined, FormatPainterOutlined, ExportOutlined } = antdIcons;
+const { MailOutlined, InboxOutlined, SendOutlined, EditOutlined, SettingOutlined, ReloadOutlined, PlusOutlined, SaveOutlined, ApiOutlined, DeleteOutlined, UserOutlined, TeamOutlined, SearchOutlined, UndoOutlined, CheckOutlined, CloseOutlined, ShareAltOutlined, FolderOpenOutlined, RestOutlined, LinkOutlined, FileOutlined, EyeOutlined, DownloadOutlined, CloudUploadOutlined, BoldOutlined, ItalicOutlined, UnderlineOutlined, StrikethroughOutlined, OrderedListOutlined, UnorderedListOutlined, BgColorsOutlined, FontColorsOutlined, ClearOutlined, RedoOutlined, RollbackOutlined, PictureOutlined, FormatPainterOutlined, ExportOutlined, UpOutlined, DownOutlined } = antdIcons;
 const { Title, Text } = Typography;
 
 const STORAGE_KEY = 'agentmail_data';
+
+function useIsDark() {
+  const [dark, setDark] = React.useState(false);
+  React.useEffect(() => {
+    const check = () => {
+      const el = document.documentElement;
+      const isDark = el.getAttribute('data-theme') === 'dark'
+        || el.classList.contains('dark')
+        || window.matchMedia('(prefers-color-scheme: dark)').matches
+        || getComputedStyle(el).getPropertyValue('--antd-color-bg-container').trim().startsWith('#1')
+        || getComputedStyle(el).backgroundColor.match(/^rgba?\(\s*(\d+)/)?.[1] && parseInt(getComputedStyle(el).backgroundColor.match(/^rgba?\(\s*(\d+)/)[1]) < 50;
+      setDark(!!isDark);
+    };
+    check();
+    const observer = new MutationObserver(check);
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] });
+    const mql = window.matchMedia('(prefers-color-scheme: dark)');
+    mql.addEventListener?.('change', check);
+    return () => { observer.disconnect(); mql.removeEventListener?.('change', check); };
+  }, []);
+  return dark;
+}
 
 // 简单的客户端加密密钥（生产环境应从环境变量获取）
 const _STORAGE_KEY = (window as any).__AGENTMAIL_KEY__ || 'agentmail-default-key-2026';
@@ -103,35 +125,82 @@ function getAllAgentIds(): string[] {
   return ids;
 }
 
+function getCurrentAgentId(): string {
+  // 与 QwenPaw 前端逻辑保持一致，优先级：
+  // 1. sessionStorage qwenpaw-agent-storage -> state.selectedAgent
+  try {
+    const sessionData = sessionStorage.getItem('qwenpaw-agent-storage');
+    if (sessionData) {
+      const parsed = JSON.parse(sessionData);
+      const selected = parsed?.state?.selectedAgent;
+      if (selected) return selected;
+    }
+  } catch { }
+
+  // 2. localStorage qwenpaw-last-used-agent
+  try {
+    const lastUsed = localStorage.getItem('qwenpaw-last-used-agent');
+    if (lastUsed) return lastUsed;
+  } catch { }
+
+  // 3. localStorage qwenpaw-agent-storage -> state.selectedAgent
+  try {
+    const localData = localStorage.getItem('qwenpaw-agent-storage');
+    if (localData) {
+      const parsed = JSON.parse(localData);
+      const selected = parsed?.state?.selectedAgent;
+      if (selected) return selected;
+    }
+  } catch { }
+
+  // 4. 兼容旧版
+  const match = window.location.pathname.match(/\/agent\/([^\/]+)/);
+  return match ? match[1] : localStorage.getItem('current_agent_id') || 'default';
+}
+
 function getAllAgents(): {id: string, name: string}[] {
   const agents: {id: string, name: string}[] = [];
+  const seen = new Set<string>();
 
-  // 1. 尝试从 QwenPaw 新版 zustand store 读取 (qwenpaw-agent-storage)
+  const addAgent = (id: string, name: string) => {
+    if (id && !seen.has(id)) {
+      seen.add(id);
+      agents.push({ id, name: name || id });
+    }
+  };
+
+  // 1. 从 sessionStorage qwenpaw-agent-storage 读取
+  try {
+    const sessionData = sessionStorage.getItem('qwenpaw-agent-storage');
+    if (sessionData) {
+      const parsed = JSON.parse(sessionData);
+      const state = parsed?.state || parsed;
+      if (state?.agents && Array.isArray(state.agents)) {
+        state.agents.forEach((a: any) => addAgent(a.id, a.name));
+      }
+    }
+  } catch { }
+
+  // 2. 从 localStorage qwenpaw-agent-storage 读取
   try {
     const storageData = localStorage.getItem('qwenpaw-agent-storage');
     if (storageData) {
       const parsed = JSON.parse(storageData);
       const state = parsed?.state || parsed;
       if (state?.agents && Array.isArray(state.agents)) {
-        state.agents.forEach((a: any) => {
-          if (a.id) {
-            agents.push({ id: a.id, name: a.name || a.id });
-          }
-        });
+        state.agents.forEach((a: any) => addAgent(a.id, a.name));
       }
     }
   } catch { }
 
-  // 2. 尝试从旧版 qwenpaw_agents 读取（兼容旧版本）
+  // 3. 尝试从旧版 qwenpaw_agents 读取（兼容旧版本）
   if (agents.length === 0) {
     try {
       const agentsData = localStorage.getItem('qwenpaw_agents');
       if (agentsData) {
         const parsed = JSON.parse(agentsData);
         if (Array.isArray(parsed)) {
-          parsed.forEach((a: any) => {
-            agents.push({ id: a.id || a.agent_id, name: a.name || a.id || a.agent_id });
-          });
+          parsed.forEach((a: any) => addAgent(a.id || a.agent_id, a.name));
         }
       }
     } catch { }
@@ -148,7 +217,26 @@ function getAllAgents(): {id: string, name: string}[] {
   return agents;
 }
 
+// 后端API基础URL
+const API_BASE_URL = 'http://192.168.10.132:18088/api/v1/email';
+
+// 是否使用真实后端API（生产环境设为true）
+const USE_REAL_API = true;
+
 async function apiGet(path: string, agentId: string) {
+  // 优先使用真实后端API
+  if (USE_REAL_API) {
+    try {
+      const response = await fetch(`${API_BASE_URL}${path}`);
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (e) {
+      console.warn('Backend API failed, falling back to localStorage:', e);
+    }
+  }
+  
+  // 降级使用localStorage（开发/测试环境）
   const data = getStorage(agentId);
   if (path.includes('/contacts')) {
     const params = new URLSearchParams(path.split('?')[1] || '');
@@ -213,6 +301,25 @@ async function apiGet(path: string, agentId: string) {
 }
 
 async function apiPost(path: string, body: any, agentId: string) {
+  // 优先使用真实后端API
+  if (USE_REAL_API) {
+    try {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      });
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (e) {
+      console.warn('Backend API failed, falling back to localStorage:', e);
+    }
+  }
+  
+  // 降级使用localStorage（开发/测试环境）
   const data = getStorage(agentId);
   if (path.includes('/contacts') && !path.includes('/batch')) {
     const contact = { ...body, id: Date.now(), created_at: new Date().toISOString() };
@@ -339,6 +446,18 @@ async function apiPost(path: string, body: any, agentId: string) {
 }
 
 async function apiPut(path: string, body: any, agentId: string) {
+  if (USE_REAL_API) {
+    try {
+      const response = await fetch(`${API_BASE_URL}${path}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      if (response.ok) return await response.json();
+    } catch (e) {
+      console.warn('Backend API PUT failed, falling back to localStorage:', e);
+    }
+  }
   const data = getStorage(agentId);
   if (path.includes('/contacts/')) {
     const id = parseInt(path.split('/').pop() || '0');
@@ -410,6 +529,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.trash': 'Trash',
       'email.config': 'Settings',
       'email.refresh': 'Refresh',
+      'email.syncInbox': 'Sync Inbox',
       'email.compose': 'Compose',
       'email.search': 'Search',
       'email.new': 'New',
@@ -452,6 +572,12 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.allGroups': 'All Groups',
       'email.newGroup': 'New Group',
       'email.groupName': 'Group Name',
+      'email.editGroup': 'Edit Group',
+      'email.deleteGroup': 'Delete Group',
+      'email.confirmDeleteGroup': 'Delete this group? Contacts will be moved to default.',
+      'email.groupRenamed': 'Group renamed',
+      'email.groupDeleted': 'Group deleted',
+      'email.groupExists': 'Group already exists',
       'email.contactCount': 'contacts',
       'email.noContacts': 'No contacts',
       'email.noEmails': 'No emails',
@@ -473,7 +599,28 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.pop3': 'POP3',
       'email.authCode': 'Auth Code',
       'email.authCodeTip': 'Please use auth code instead of password',
+      'email.showAdvanced': 'Show server settings',
+      'email.hideAdvanced': 'Hide server settings',
+      'email.recommended': '(Recommended)',
+      'email.pop3Warning': 'POP3 does not support IMAP IDLE real-time push. New emails require manual sync.',
       'email.useAuthCode': 'Use Auth Code',
+      'email.authType': 'Auth Type',
+      'email.basicAuth': 'Basic Auth',
+      'email.oauth2': 'OAuth2',
+      'email.oauth2ClientId': 'Client ID',
+      'email.oauth2ClientSecret': 'Client Secret (Optional)',
+      'email.oauth2Authorize': 'Authorize with Microsoft',
+      'email.oauth2Authorized': 'Authorized',
+      'email.oauth2NotAuthorized': 'Not Authorized',
+      'email.oauth2TokenExpired': 'Token Expired',
+      'email.oauth2UserCode': 'User Code',
+      'email.oauth2VerifyUrl': 'Verification URL',
+      'email.oauth2Instructions': 'Open the URL in a browser and enter the code to authorize',
+      'email.oauth2Polling': 'Waiting for authorization...',
+      'email.oauth2Success': 'Authorization successful',
+      'email.oauth2Failed': 'Authorization failed',
+      'email.oauth2Revoke': 'Revoke Authorization',
+      'email.outlookOAuth2Tip': 'Outlook requires OAuth2. Please register an Azure AD app first.',
       'email.smtpHost': 'SMTP Server',
       'email.smtpPort': 'SMTP Port',
       'email.receiveHost': 'Receive Server',
@@ -483,11 +630,6 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.useTls': 'Use TLS',
       'email.useSsl': 'Use SSL',
       'email.displayName': 'Display Name',
-      'email.apiKey': 'API Key',
-      'email.inboxId': 'Inbox ID',
-      'email.forwarding': 'Enable Forwarding',
-      'email.hybridMode': 'Hybrid Mode',
-      'email.hybridTip': 'Hybrid mode: Configure both traditional email (SMTP/POP3/IMAP) and AgentMail.to API. Emails are automatically synchronized between both services.',
       'email.configSaved': 'Configuration saved',
       'email.saveFailed': 'Save failed',
       'email.testConnection': 'Test Connection',
@@ -495,9 +637,10 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.notConfigured': 'Not Configured',
       'email.connected': 'Connected',
       'email.disconnected': 'Disconnected',
-      'email.mode': 'Mode',
+      'email.configured': 'Configured',
+      'email.connectionSuccess': 'Connection successful',
+      'email.connectionFailed': 'Connection failed',
       'email.traditional': 'Traditional',
-      'email.agentmail': 'AgentMail',
       'email.selectType': 'Select Type',
       'email.allTypes': 'All Types',
       'email.typeInbox': 'Inbox',
@@ -511,11 +654,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.send': 'Send',
       'email.saveDraft': 'Save Draft',
       'email.selectContact': 'Select Contact',
-      'email.getApiKey': 'Get API Key',
       'email.modeDescription': 'Mode Description',
       'email.traditionalDesc': 'Use traditional email providers (SMTP/IMAP/POP3)',
-      'email.agentmailDesc': 'Use AgentMail.to AI email service',
-      'email.hybridDesc': 'Use both traditional and AgentMail with auto-forwarding',
       'email.setMode': 'Set Mode',
       'email.attachments': 'Attachments',
       'email.attachment': 'Attachment',
@@ -526,6 +666,14 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.backupNow': 'Backup Now',
       'email.backupSuccess': 'Backup completed',
       'email.backupPath': 'Backup stored in agent workspace /email/bak',
+      'email.pushListen': 'IMAP IDLE Push',
+      'email.listening': 'Listening',
+      'email.stopped': 'Stopped',
+      'email.startListen': 'Start',
+      'email.stopListen': 'Stop',
+      'email.listenStarted': 'Push listener started, new emails will be auto-delivered to inbox',
+      'email.listenStopped': 'Push listener stopped',
+      'email.pushListenDesc': 'Maintain a persistent connection via IMAP IDLE protocol. New emails are pushed by the server in real-time — no polling needed, saving resources.',
       'email.download': 'Download',
       'email.fileName': 'File Name',
       'email.fileSize': 'Size',
@@ -547,10 +695,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.insertImage': 'Insert Image',
       'email.insertAttachment': 'Insert Attachment',
       'email.writeEmail': 'Write Email',
-      'email.hybridPrinciple': 'Hybrid Mode Principle',
-      'email.hybridPrincipleDesc': 'Hybrid mode simultaneously configures traditional email (SMTP/POP3/IMAP) and AgentMail.to API. The system will automatically synchronize emails between both services, allowing you to use both traditional email clients and AI email services.',
-      'email.traditionalSettings': 'Traditional Email Settings',
-      'email.agentmailSettings': 'AgentMail.to Settings',
+      'email.emailConfig': 'Email Configuration',
+      'email.configTip': 'Configure SMTP and IMAP/POP3 email parameters. Supports major email providers. Enable real-time push listening after configuring IMAP.',
       'email.uninstall': 'Uninstall Plugin',
       'email.uninstallConfirm': 'Are you sure you want to uninstall the AgentMail plugin?',
       'email.keepData': 'Keep data files',
@@ -569,6 +715,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.trash': '回收站',
       'email.config': '设置',
       'email.refresh': '刷新',
+      'email.syncInbox': '同步邮件',
       'email.compose': '写邮件',
       'email.search': '搜索',
       'email.new': '新建',
@@ -611,6 +758,12 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.allGroups': '所有分组',
       'email.newGroup': '新建分组',
       'email.groupName': '分组名称',
+      'email.editGroup': '编辑分组',
+      'email.deleteGroup': '删除分组',
+      'email.confirmDeleteGroup': '确定删除此分组？分组内的联系人将移至默认分组。',
+      'email.groupRenamed': '分组已重命名',
+      'email.groupDeleted': '分组已删除',
+      'email.groupExists': '分组已存在',
       'email.contactCount': '个联系人',
       'email.noContacts': '暂无联系人',
       'email.noEmails': '暂无邮件',
@@ -632,7 +785,28 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.pop3': 'POP3',
       'email.authCode': '授权码',
       'email.authCodeTip': '请使用授权码而非登录密码',
+      'email.showAdvanced': '展开服务器设置',
+      'email.hideAdvanced': '收起服务器设置',
+      'email.recommended': '(推荐)',
+      'email.pop3Warning': 'POP3 不支持 IMAP IDLE 实时推送，新邮件需要手动同步',
       'email.useAuthCode': '使用授权码',
+      'email.authType': '认证方式',
+      'email.basicAuth': '基本认证',
+      'email.oauth2': 'OAuth2',
+      'email.oauth2ClientId': '客户端 ID',
+      'email.oauth2ClientSecret': '客户端密钥（可选）',
+      'email.oauth2Authorize': 'Microsoft 授权',
+      'email.oauth2Authorized': '已授权',
+      'email.oauth2NotAuthorized': '未授权',
+      'email.oauth2TokenExpired': '令牌已过期',
+      'email.oauth2UserCode': '用户代码',
+      'email.oauth2VerifyUrl': '验证网址',
+      'email.oauth2Instructions': '在浏览器中打开网址并输入代码完成授权',
+      'email.oauth2Polling': '等待授权中...',
+      'email.oauth2Success': '授权成功',
+      'email.oauth2Failed': '授权失败',
+      'email.oauth2Revoke': '撤销授权',
+      'email.outlookOAuth2Tip': 'Outlook 需要 OAuth2 认证，请先注册 Azure AD 应用',
       'email.smtpHost': 'SMTP服务器',
       'email.smtpPort': 'SMTP端口',
       'email.receiveHost': '接收服务器',
@@ -642,11 +816,6 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.useTls': '使用TLS',
       'email.useSsl': '使用SSL',
       'email.displayName': '显示名称',
-      'email.apiKey': 'API密钥',
-      'email.inboxId': '收件箱ID',
-      'email.forwarding': '启用转发',
-      'email.hybridMode': '混合模式',
-      'email.hybridTip': '混合模式：同时配置传统邮箱(SMTP/POP3/IMAP)和AgentMail.to API，邮件自动在两种服务间同步',
       'email.configSaved': '配置已保存',
       'email.saveFailed': '保存失败',
       'email.testConnection': '测试连接',
@@ -654,9 +823,10 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.notConfigured': '未配置',
       'email.connected': '已连接',
       'email.disconnected': '未连接',
-      'email.mode': '模式',
+      'email.configured': '已配置',
+      'email.connectionSuccess': '连接成功',
+      'email.connectionFailed': '连接失败',
       'email.traditional': '传统邮箱',
-      'email.agentmail': 'AgentMail',
       'email.selectType': '选择类型',
       'email.allTypes': '所有类型',
       'email.typeInbox': '收件箱',
@@ -670,11 +840,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.send': '发送',
       'email.saveDraft': '存草稿',
       'email.selectContact': '选择联系人',
-      'email.getApiKey': '获取API密钥',
       'email.modeDescription': '模式说明',
       'email.traditionalDesc': '使用传统邮箱服务商 (SMTP/IMAP/POP3)',
-      'email.agentmailDesc': '使用 AgentMail.to AI 邮件服务',
-      'email.hybridDesc': '同时使用传统邮箱和AgentMail，并启用自动转发',
       'email.setMode': '设置模式',
       'email.attachments': '附件',
       'email.attachment': '附件',
@@ -685,6 +852,14 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.backupNow': '立即备份',
       'email.backupSuccess': '备份完成',
       'email.backupPath': '备份存储在agent工作空间 /email/bak',
+      'email.pushListen': 'IMAP IDLE 实时监听',
+      'email.listening': '监听中',
+      'email.stopped': '未监听',
+      'email.startListen': '启动监听',
+      'email.stopListen': '停止',
+      'email.listenStarted': '监听已启动，新邮件将自动推送到收件箱',
+      'email.listenStopped': '监听已停止',
+      'email.pushListenDesc': '通过 IMAP IDLE 协议维持与服务器的长连接，新邮件到达时服务器主动推送通知，无需轮询，节省资源。',
       'email.download': '下载',
       'email.fileName': '文件名',
       'email.fileSize': '大小',
@@ -706,10 +881,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.insertImage': '插入图片',
       'email.insertAttachment': '插入附件',
       'email.writeEmail': '写信',
-      'email.hybridPrinciple': '混合模式原理',
-      'email.hybridPrincipleDesc': '混合模式同时配置传统邮箱(SMTP/POP3/IMAP)和AgentMail.to API。系统会自动在两种服务间同步邮件，让您既能使用传统邮件客户端，也能使用AI邮件服务。',
-      'email.traditionalSettings': '传统邮箱设置',
-      'email.agentmailSettings': 'AgentMail.to 设置',
+      'email.emailConfig': '邮箱配置',
+      'email.configTip': '配置SMTP和IMAP/POP3邮箱参数，支持主流邮箱服务商。配置IMAP后可启用实时推送监听。',
       'email.uninstall': '卸载插件',
       'email.uninstallConfirm': '确定要卸载 AgentMail 插件吗？',
       'email.keepData': '保留数据文件',
@@ -728,6 +901,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.trash': 'ゴミ箱',
       'email.config': '設定',
       'email.refresh': '更新',
+      'email.syncInbox': '受信同期',
       'email.compose': '新規作成',
       'email.search': '検索',
       'email.new': '新規',
@@ -770,6 +944,12 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.allGroups': 'すべてのグループ',
       'email.newGroup': '新規グループ',
       'email.groupName': 'グループ名',
+      'email.editGroup': 'グループ編集',
+      'email.deleteGroup': 'グループ削除',
+      'email.confirmDeleteGroup': 'このグループを削除しますか？連絡先はデフォルトに移動されます。',
+      'email.groupRenamed': 'グループ名が変更されました',
+      'email.groupDeleted': 'グループが削除されました',
+      'email.groupExists': 'グループは既に存在します',
       'email.contactCount': '件の連絡先',
       'email.noContacts': '連絡先がありません',
       'email.noEmails': 'メールがありません',
@@ -791,7 +971,28 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.pop3': 'POP3',
       'email.authCode': '認証コード',
       'email.authCodeTip': 'パスワードの代わりに認証コードを使用してください',
+      'email.showAdvanced': 'サーバー設定を表示',
+      'email.hideAdvanced': 'サーバー設定を非表示',
+      'email.recommended': '(推奨)',
+      'email.pop3Warning': 'POP3はIMAP IDLEリアルタイムプッシュに対応していません。新着メールは手動同期が必要です。',
       'email.useAuthCode': '認証コードを使用',
+      'email.authType': '認証タイプ',
+      'email.basicAuth': '基本認証',
+      'email.oauth2': 'OAuth2',
+      'email.oauth2ClientId': 'クライアントID',
+      'email.oauth2ClientSecret': 'クライアントシークレット（任意）',
+      'email.oauth2Authorize': 'Microsoft認証',
+      'email.oauth2Authorized': '認証済み',
+      'email.oauth2NotAuthorized': '未認証',
+      'email.oauth2TokenExpired': 'トークン期限切れ',
+      'email.oauth2UserCode': 'ユーザーコード',
+      'email.oauth2VerifyUrl': '確認URL',
+      'email.oauth2Instructions': 'ブラウザでURLを開き、コードを入力して認証してください',
+      'email.oauth2Polling': '認証待ち...',
+      'email.oauth2Success': '認証成功',
+      'email.oauth2Failed': '認証失敗',
+      'email.oauth2Revoke': '認証を取り消し',
+      'email.outlookOAuth2Tip': 'OutlookはOAuth2認証が必要です。先にAzure ADアプリを登録してください',
       'email.smtpHost': 'SMTPサーバー',
       'email.smtpPort': 'SMTPポート',
       'email.receiveHost': '受信サーバー',
@@ -801,11 +1002,6 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.useTls': 'TLSを使用',
       'email.useSsl': 'SSLを使用',
       'email.displayName': '表示名',
-      'email.apiKey': 'APIキー',
-      'email.inboxId': '受信箱ID',
-      'email.forwarding': '転送を有効化',
-      'email.hybridMode': 'ハイブリッドモード',
-      'email.hybridTip': 'ハイブリッドモード：従来のメール(SMTP/POP3/IMAP)とAgentMail.to APIを同時に設定し、メールを自動同期します',
       'email.configSaved': '設定を保存しました',
       'email.saveFailed': '保存に失敗しました',
       'email.testConnection': '接続テスト',
@@ -813,9 +1009,10 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.notConfigured': '未設定',
       'email.connected': '接続済み',
       'email.disconnected': '未接続',
-      'email.mode': 'モード',
+      'email.configured': '設定済み',
+      'email.connectionSuccess': '接続成功',
+      'email.connectionFailed': '接続失敗',
       'email.traditional': '従来のメール',
-      'email.agentmail': 'AgentMail',
       'email.selectType': 'タイプを選択',
       'email.allTypes': 'すべてのタイプ',
       'email.typeInbox': '受信箱',
@@ -829,11 +1026,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.send': '送信',
       'email.saveDraft': '下書き保存',
       'email.selectContact': '連絡先を選択',
-      'email.getApiKey': 'APIキーを取得',
-      'email.modeDescription': 'モード説明',
+      'email.modeDescription': 'モードの説明',
       'email.traditionalDesc': '従来のメールプロバイダーを使用 (SMTP/IMAP/POP3)',
-      'email.agentmailDesc': 'AgentMail.to AIメールサービスを使用',
-      'email.hybridDesc': '従来のメールとAgentMailを同時に使用し、自動転送を有効化',
       'email.setMode': 'モードを設定',
       'email.attachments': '添付ファイル',
       'email.attachment': '添付ファイル',
@@ -844,6 +1038,14 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.backupNow': '今すぐバックアップ',
       'email.backupSuccess': 'バックアップ完了',
       'email.backupPath': 'バックアップはagentワークスペース /email/bak に保存されます',
+      'email.pushListen': 'IMAP IDLE プッシュ',
+      'email.listening': 'リスニング中',
+      'email.stopped': '停止',
+      'email.startListen': '開始',
+      'email.stopListen': '停止',
+      'email.listenStarted': 'プッシュリスナーが開始されました。新しいメールは自動的に受信箱に配信されます',
+      'email.listenStopped': 'プッシュリスナーが停止しました',
+      'email.pushListenDesc': 'IMAP IDLE プロトコルでサーバーとの長接続を維持。新着メールはサーバーからリアルタイムでプッシュされ、ポーリング不要でリソースを節約します。',
       'email.download': 'ダウンロード',
       'email.fileName': 'ファイル名',
       'email.fileSize': 'サイズ',
@@ -864,11 +1066,9 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.insertLink': 'リンクを挿入',
       'email.insertImage': '画像を挿入',
       'email.insertAttachment': '添付ファイルを挿入',
-      'email.writeEmail': 'メールを作成',
-      'email.hybridPrinciple': 'ハイブリッドモードの原理',
-      'email.hybridPrincipleDesc': 'ハイブリッドモードは、従来のメール(SMTP/POP3/IMAP)とAgentMail.to APIを同時に設定します。システムは両方のサービス間でメールを自動同期し、従来のメールクライアントとAIメールサービスの両方を使用できます。',
-      'email.traditionalSettings': '従来のメール設定',
-      'email.agentmailSettings': 'AgentMail.to 設定',
+      'email.writeEmail': 'メール作成',
+      'email.emailConfig': 'メール設定',
+      'email.configTip': 'SMTPおよびIMAP/POP3メールパラメータを設定します。主要なメールプロバイダーに対応。IMAP設定後、リアルタイムプッシュリスニングを有効にできます。',
       'email.uninstall': 'プラグインをアンインストール',
       'email.uninstallConfirm': 'AgentMail プラグインをアンインストールしてもよろしいですか？',
       'email.keepData': 'データファイルを保持',
@@ -887,6 +1087,7 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.trash': 'Корзина',
       'email.config': 'Настройки',
       'email.refresh': 'Обновить',
+      'email.syncInbox': 'Синхронизировать',
       'email.compose': 'Написать',
       'email.search': 'Поиск',
       'email.new': 'Создать',
@@ -929,6 +1130,12 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.allGroups': 'Все группы',
       'email.newGroup': 'Новая группа',
       'email.groupName': 'Название группы',
+      'email.editGroup': 'Редактировать группу',
+      'email.deleteGroup': 'Удалить группу',
+      'email.confirmDeleteGroup': 'Удалить эту группу? Контакты будут перемещены в default.',
+      'email.groupRenamed': 'Группа переименована',
+      'email.groupDeleted': 'Группа удалена',
+      'email.groupExists': 'Группа уже существует',
       'email.contactCount': 'контактов',
       'email.noContacts': 'Нет контактов',
       'email.noEmails': 'Нет писем',
@@ -950,7 +1157,28 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.pop3': 'POP3',
       'email.authCode': 'Код авторизации',
       'email.authCodeTip': 'Используйте код авторизации вместо пароля',
+      'email.showAdvanced': 'Показать настройки сервера',
+      'email.hideAdvanced': 'Скрыть настройки сервера',
+      'email.recommended': '(Рекомендуется)',
+      'email.pop3Warning': 'POP3 не поддерживает push-уведомления IMAP IDLE в реальном времени. Новые письма требуют ручной синхронизации.',
       'email.useAuthCode': 'Использовать код авторизации',
+      'email.authType': 'Тип аутентификации',
+      'email.basicAuth': 'Базовая аутентификация',
+      'email.oauth2': 'OAuth2',
+      'email.oauth2ClientId': 'ID клиента',
+      'email.oauth2ClientSecret': 'Секрет клиента (необязательно)',
+      'email.oauth2Authorize': 'Авторизация Microsoft',
+      'email.oauth2Authorized': 'Авторизовано',
+      'email.oauth2NotAuthorized': 'Не авторизовано',
+      'email.oauth2TokenExpired': 'Токен истёк',
+      'email.oauth2UserCode': 'Код пользователя',
+      'email.oauth2VerifyUrl': 'URL проверки',
+      'email.oauth2Instructions': 'Откройте URL в браузере и введите код для авторизации',
+      'email.oauth2Polling': 'Ожидание авторизации...',
+      'email.oauth2Success': 'Авторизация успешна',
+      'email.oauth2Failed': 'Ошибка авторизации',
+      'email.oauth2Revoke': 'Отозвать авторизацию',
+      'email.outlookOAuth2Tip': 'Outlook требует OAuth2. Зарегистрируйте приложение Azure AD сначала',
       'email.smtpHost': 'SMTP сервер',
       'email.smtpPort': 'SMTP порт',
       'email.receiveHost': 'Сервер получения',
@@ -960,11 +1188,6 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.useTls': 'Использовать TLS',
       'email.useSsl': 'Использовать SSL',
       'email.displayName': 'Отображаемое имя',
-      'email.apiKey': 'API ключ',
-      'email.inboxId': 'ID входящих',
-      'email.forwarding': 'Включить пересылку',
-      'email.hybridMode': 'Гибридный режим',
-      'email.hybridTip': 'Гибридный режим: одновременная настройка традиционной почты (SMTP/POP3/IMAP) и AgentMail.to API с автоматической синхронизацией',
       'email.configSaved': 'Настройки сохранены',
       'email.saveFailed': 'Ошибка сохранения',
       'email.testConnection': 'Проверить соединение',
@@ -972,9 +1195,10 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.notConfigured': 'Не настроено',
       'email.connected': 'Подключено',
       'email.disconnected': 'Отключено',
-      'email.mode': 'Режим',
+      'email.configured': 'Настроено',
+      'email.connectionSuccess': 'Соединение успешно',
+      'email.connectionFailed': 'Ошибка соединения',
       'email.traditional': 'Традиционная почта',
-      'email.agentmail': 'AgentMail',
       'email.selectType': 'Выбрать тип',
       'email.allTypes': 'Все типы',
       'email.typeInbox': 'Входящие',
@@ -988,11 +1212,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.send': 'Отправить',
       'email.saveDraft': 'Сохранить черновик',
       'email.selectContact': 'Выбрать контакт',
-      'email.getApiKey': 'Получить API ключ',
       'email.modeDescription': 'Описание режима',
       'email.traditionalDesc': 'Использовать традиционного почтового провайдера (SMTP/IMAP/POP3)',
-      'email.agentmailDesc': 'Использовать сервис AgentMail.to AI',
-      'email.hybridDesc': 'Использовать одновременно традиционную почту и AgentMail с автоматической пересылкой',
       'email.setMode': 'Установить режим',
       'email.attachments': 'Вложения',
       'email.attachment': 'Вложение',
@@ -1003,6 +1224,14 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.backupNow': 'Создать резервную копию',
       'email.backupSuccess': 'Резервное копирование завершено',
       'email.backupPath': 'Резервная копия сохранена в рабочем пространстве agent /email/bak',
+      'email.pushListen': 'IMAP IDLE Push',
+      'email.listening': 'Прослушивание',
+      'email.stopped': 'Остановлено',
+      'email.startListen': 'Запустить',
+      'email.stopListen': 'Остановить',
+      'email.listenStarted': 'Push-слушатель запущен, новые письма будут автоматически доставляться во входящие',
+      'email.listenStopped': 'Push-слушатель остановлен',
+      'email.pushListenDesc': 'Постоянное соединение через протокол IMAP IDLE. Новые письма отправляются сервером в реальном времени — без опроса, экономия ресурсов.',
       'email.download': 'Скачать',
       'email.fileName': 'Имя файла',
       'email.fileSize': 'Размер',
@@ -1024,10 +1253,8 @@ const TRANSLATIONS: Record<string, Record<string, string>> = {
       'email.insertImage': 'Вставить изображение',
       'email.insertAttachment': 'Вставить вложение',
       'email.writeEmail': 'Написать письмо',
-      'email.hybridPrinciple': 'Принцип гибридного режима',
-      'email.hybridPrincipleDesc': 'Гибридный режим одновременно настраивает традиционную почту (SMTP/POP3/IMAP) и AgentMail.to API. Система автоматически синхронизирует письма между обоими сервисами, позволяя использовать как традиционный почтовый клиент, так и AI почтовый сервис.',
-      'email.traditionalSettings': 'Настройки традиционной почты',
-      'email.agentmailSettings': 'Настройки AgentMail.to',
+      'email.emailConfig': 'Настройка почты',
+      'email.configTip': 'Настройте параметры SMTP и IMAP/POP3. Поддержка основных почтовых провайдеров. После настройки IMAP можно включить push-прослушивание в реальном времени.',
       'email.uninstall': 'Удалить плагин',
       'email.uninstallConfirm': 'Вы уверены, что хотите удалить плагин AgentMail?',
       'email.keepData': 'Сохранить файлы данных',
@@ -1312,45 +1539,51 @@ function useTranslation() {
 }
 
 interface AgentConfig {
-  hybrid?: any;
+  provider?: string;
+  email?: string;
+  display_name?: string;
+  receive_protocol?: string;
+  smtp?: any;
+  imap?: any;
   updated_at?: string;
 }
 
 const EMAIL_PROVIDERS: Record<string, any> = {
   qq: {
     name: 'QQ Mail',
-    smtp: { host: 'smtp.qq.com', port: 587, use_tls: true },
-    receive: { host: 'imap.qq.com', port: 993, use_ssl: true, protocol: 'imap' },
+    smtp: { host: 'smtp.qq.com', port: 465, use_tls: true },
+    imap: { host: 'imap.qq.com', port: 993, use_ssl: true },
     authCode: true,
   },
   mail163: {
     name: '163 Mail',
     smtp: { host: 'smtp.163.com', port: 25, use_tls: true },
-    receive: { host: 'imap.163.com', port: 993, use_ssl: true, protocol: 'imap' },
+    imap: { host: 'imap.163.com', port: 993, use_ssl: true },
     authCode: true,
   },
   mail126: {
     name: '126 Mail',
     smtp: { host: 'smtp.126.com', port: 25, use_tls: true },
-    receive: { host: 'imap.126.com', port: 993, use_ssl: true, protocol: 'imap' },
+    imap: { host: 'imap.126.com', port: 993, use_ssl: true },
     authCode: true,
   },
   gmail: {
     name: 'Gmail',
     smtp: { host: 'smtp.gmail.com', port: 587, use_tls: true },
-    receive: { host: 'imap.gmail.com', port: 993, use_ssl: true, protocol: 'imap' },
-    authCode: false,
+    imap: { host: 'imap.gmail.com', port: 993, use_ssl: true },
+    authCode: true,
   },
   outlook: {
     name: 'Outlook',
-    smtp: { host: 'smtp.office365.com', port: 587, use_tls: true },
-    receive: { host: 'outlook.office365.com', port: 993, use_ssl: true, protocol: 'imap' },
+    smtp: { host: 'smtp-mail.outlook.com', port: 587, use_tls: true },
+    imap: { host: 'outlook.office365.com', port: 993, use_ssl: true },
     authCode: false,
+    oauth2: true,
   },
   custom: {
     name: 'Custom',
     smtp: { host: '', port: 587, use_tls: true },
-    receive: { host: '', port: 993, use_ssl: true, protocol: 'pop3' },
+    imap: { host: '', port: 993, use_ssl: true },
     authCode: false,
   },
 };
@@ -1361,25 +1594,62 @@ function formatFileSize(bytes: number): string {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
 }
 
-function HybridConfigModal({ visible, onCancel, onSave, initialValues }: any) {
+function EmailConfigModal({ visible, onCancel, onSave, initialValues }: any) {
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [saving, setSaving] = React.useState(false);
   const [provider, setProvider] = React.useState(initialValues?.provider || 'custom');
-  const [protocol, setProtocol] = React.useState(initialValues?.receive_protocol || 'pop3');
-  const [activeSection, setActiveSection] = React.useState('traditional');
+  const [receiveProtocol, setReceiveProtocol] = React.useState(initialValues?.receive_protocol || 'imap');
+  const [authType, setAuthType] = React.useState(initialValues?.auth_type || 'basic');
+  const [oauth2ClientId, setOauth2ClientId] = React.useState('');
+  const [oauth2ClientSecret, setOauth2ClientSecret] = React.useState('');
+  const [oauth2Authorized, setOauth2Authorized] = React.useState(false);
+  const [oauth2Polling, setOauth2Polling] = React.useState(false);
+  const [oauth2DeviceCode, setOauth2DeviceCode] = React.useState('');
+  const [oauth2UserCode, setOauth2UserCode] = React.useState('');
+  const [oauth2VerifyUrl, setOauth2VerifyUrl] = React.useState('');
+  const [oauth2Interval, setOauth2Interval] = React.useState(5);
 
   React.useEffect(() => {
     if (visible) {
       if (initialValues) {
-        form.setFieldsValue(initialValues);
+        const email = initialValues.email || '';
+        const username = initialValues.smtp?.username || initialValues.imap?.username || email;
+        const password = initialValues.smtp?.password || initialValues.imap?.password || '';
+        form.setFieldsValue({
+          provider: initialValues.provider || 'custom',
+          email,
+          display_name: initialValues.display_name || '',
+          username,
+          password,
+          receive_protocol: initialValues.receive_protocol || 'imap',
+          smtp_host: initialValues.smtp?.host || '',
+          smtp_port: initialValues.smtp?.port || 587,
+          smtp_use_tls: initialValues.smtp?.use_tls ?? true,
+          imap_host: initialValues.imap?.host || '',
+          imap_port: initialValues.imap?.port || 993,
+          imap_use_ssl: initialValues.imap?.use_ssl ?? true,
+          auth_type: initialValues.auth_type || 'basic',
+          oauth2_client_id: initialValues.oauth2?.client_id || '',
+          oauth2_client_secret: initialValues.oauth2?.client_secret || '',
+        });
         setProvider(initialValues.provider || 'custom');
-        setProtocol(initialValues.receive_protocol || 'pop3');
+        setReceiveProtocol(initialValues.receive_protocol || 'imap');
+        setAuthType(initialValues.auth_type || 'basic');
+        setOauth2ClientId(initialValues.oauth2?.client_id || '');
+        setOauth2ClientSecret(initialValues.oauth2?.client_secret || '');
+        if (initialValues.auth_type === 'oauth2' && initialValues.oauth2?.access_token) {
+          setOauth2Authorized(true);
+        } else {
+          setOauth2Authorized(false);
+        }
       } else {
         form.resetFields();
-        form.setFieldsValue({ provider: 'custom', receive_protocol: 'pop3', forwarding: true });
+        form.setFieldsValue({ provider: 'custom', receive_protocol: 'imap', smtp_port: 587, smtp_use_tls: true, imap_port: 993, imap_use_ssl: true, auth_type: 'basic' });
         setProvider('custom');
-        setProtocol('pop3');
+        setReceiveProtocol('imap');
+        setAuthType('basic');
+        setOauth2Authorized(false);
       }
     }
   }, [visible, initialValues]);
@@ -1389,11 +1659,114 @@ function HybridConfigModal({ visible, onCancel, onSave, initialValues }: any) {
     const preset = EMAIL_PROVIDERS[value];
     if (preset && value !== 'custom') {
       form.setFieldsValue({
-        smtp: preset.smtp,
-        imap: preset.receive,
-        receive_protocol: preset.receive.protocol,
+        receive_protocol: 'imap',
+        smtp_host: preset.smtp.host,
+        smtp_port: preset.smtp.port,
+        smtp_use_tls: preset.smtp.use_tls,
+        imap_host: preset.imap.host,
+        imap_port: preset.imap.port,
+        imap_use_ssl: preset.imap.use_ssl,
       });
-      setProtocol(preset.receive.protocol);
+      setReceiveProtocol('imap');
+      if (preset.oauth2) {
+        setAuthType('oauth2');
+        form.setFieldsValue({ auth_type: 'oauth2' });
+      } else {
+        setAuthType('basic');
+        form.setFieldsValue({ auth_type: 'basic' });
+      }
+    }
+  };
+
+  const handleEmailChange = (e: any) => {
+    const email = e.target.value;
+    const preset = EMAIL_PROVIDERS[provider];
+    if (preset && preset.authCode && provider !== 'custom') {
+      form.setFieldsValue({ username: email });
+    }
+  };
+
+  const handleOauth2Authorize = async () => {
+    const clientId = form.getFieldValue('oauth2_client_id');
+    if (!clientId) {
+      message.error('Please enter Client ID first');
+      return;
+    }
+    const agentId = localStorage.getItem('qwenpaw-last-used-agent') || 'default';
+    const clientSecret = form.getFieldValue('oauth2_client_secret') || '';
+    try {
+      const resp = await fetch(`/api/v1/email/${agentId}/oauth2/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_id: clientId, client_secret: clientSecret || undefined, tenant_id: 'consumers' }),
+      });
+      const data = await resp.json();
+      if (data.success) {
+        setOauth2DeviceCode(data.device_code);
+        setOauth2UserCode(data.user_code);
+        setOauth2VerifyUrl(data.verification_uri);
+        setOauth2Interval(data.interval || 5);
+        setOauth2Polling(true);
+        pollOauth2Token(agentId, clientId, data.device_code, clientSecret, data.interval || 5, data.expires_in || 900);
+      } else {
+        message.error(data.error || t('email.oauth2Failed'));
+      }
+    } catch (e) {
+      message.error(t('email.oauth2Failed'));
+    }
+  };
+
+  const pollOauth2Token = (agentId: string, clientId: string, deviceCode: string, clientSecret: string, interval: number, expiresIn: number) => {
+    const startTime = Date.now();
+    const maxTime = expiresIn * 1000;
+    let currentInterval = interval * 1000;
+
+    const poll = async () => {
+      if (Date.now() - startTime > maxTime) {
+        setOauth2Polling(false);
+        message.error(t('email.oauth2Failed') + ': Timeout');
+        return;
+      }
+      try {
+        const resp = await fetch(`/api/v1/email/${agentId}/oauth2/poll`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ client_id: clientId, device_code: deviceCode, client_secret: clientSecret || undefined, tenant_id: 'consumers' }),
+        });
+        const data = await resp.json();
+        if (data.success) {
+          setOauth2Polling(false);
+          setOauth2Authorized(true);
+          setAuthType('oauth2');
+          message.success(t('email.oauth2Success'));
+          return;
+        }
+        if (data.pending) {
+          if (data.slow_down) {
+            currentInterval = Math.min(currentInterval + 5000, 30000);
+          }
+          setTimeout(poll, currentInterval);
+        } else {
+          setOauth2Polling(false);
+          message.error(data.error || t('email.oauth2Failed'));
+        }
+      } catch (e) {
+        setTimeout(poll, currentInterval);
+      }
+    };
+    setTimeout(poll, currentInterval);
+  };
+
+  const handleOauth2Revoke = async () => {
+    const agentId = localStorage.getItem('qwenpaw-last-used-agent') || 'default';
+    try {
+      await fetch(`/api/v1/email/${agentId}/oauth2/revoke`, { method: 'POST' });
+      setOauth2Authorized(false);
+      setAuthType('basic');
+      form.setFieldsValue({ auth_type: 'basic' });
+      message.success(t('email.configSaved'));
+    } catch (e) {
+      message.error(t('email.saveFailed'));
     }
   };
 
@@ -1401,7 +1774,36 @@ function HybridConfigModal({ visible, onCancel, onSave, initialValues }: any) {
     try {
       const values = await form.validateFields();
       setSaving(true);
-      await onSave(values);
+      const protocol = values.receive_protocol || 'imap';
+      const currentAuthType = provider === 'outlook' ? (values.auth_type || authType) : 'basic';
+      const config: any = {
+        provider: values.provider,
+        email: values.email,
+        display_name: values.display_name || '',
+        receive_protocol: protocol,
+        auth_type: currentAuthType,
+        smtp: {
+          host: values.smtp_host,
+          port: values.smtp_port,
+          username: values.username,
+          password: currentAuthType === 'oauth2' ? '' : values.password,
+          use_tls: values.smtp_use_tls,
+        },
+        imap: {
+          host: values.imap_host,
+          port: values.imap_port,
+          username: values.username,
+          password: currentAuthType === 'oauth2' ? '' : values.password,
+          use_ssl: values.imap_use_ssl,
+        },
+      };
+      if (currentAuthType === 'oauth2') {
+        config.oauth2 = {
+          client_id: values.oauth2_client_id,
+          client_secret: values.oauth2_client_secret || undefined,
+        };
+      }
+      await onSave(config);
       message.success(t('email.configSaved'));
       onCancel();
     } catch (e) {
@@ -1412,111 +1814,139 @@ function HybridConfigModal({ visible, onCancel, onSave, initialValues }: any) {
   };
 
   const preset = EMAIL_PROVIDERS[provider];
+  const isCustom = provider === 'custom';
+  const isOutlook = provider === 'outlook';
+  const isOAuth2Provider = preset?.oauth2;
+  const currentAuthType = form.getFieldValue('auth_type') || authType;
 
   return (
-    <Modal open={visible} title={t('email.hybridMode')} width={700} onCancel={onCancel}
+    <Modal open={visible} title={t('email.emailConfig')} width={640} onCancel={onCancel}
       footer={[
         <Button key="cancel" onClick={onCancel}>{t('email.cancel')}</Button>,
         <Button key="save" type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>{t('email.save')}</Button>,
       ]}>
-      <Alert message={t('email.hybridTip')} type="info" showIcon style={{ marginBottom: 16 }} />
-      <Tabs activeKey={activeSection} onChange={setActiveSection} items={[
-        {
-          key: 'traditional',
-          label: t('email.traditionalSettings'),
-          children: (
-            <Form form={form} layout="vertical">
-              <Form.Item name="provider" label={t('email.provider')}>
-                <Select onChange={handleProviderChange} options={[
-                  { value: 'custom', label: t('email.custom') },
-                  { value: 'qq', label: t('email.qqMail') },
-                  { value: 'mail163', label: t('email.mail163') },
-                  { value: 'mail126', label: t('email.mail126') },
-                  { value: 'gmail', label: t('email.gmail') },
-                  { value: 'outlook', label: t('email.outlook') },
-                ]} />
-              </Form.Item>
-              <Form.Item name="email" label={t('email.emailAddr')} rules={[{ required: true, type: 'email' }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="display_name" label={t('email.displayName')}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="receive_protocol" label={t('email.protocol')}>
-                <Radio.Group onChange={(e: any) => setProtocol(e.target.value)}>
-                  <Radio value="pop3">POP3</Radio>
-                  <Radio value="imap">IMAP</Radio>
-                </Radio.Group>
-              </Form.Item>
-              {preset?.authCode && (
-                <Alert message={t('email.authCodeTip')} type="warning" showIcon style={{ marginBottom: 16 }} />
-              )}
-              <Divider orientation="left">SMTP</Divider>
-              <Row gutter={16}>
-                <Col span={16}>
-                  <Form.Item name={['smtp', 'host']} label={t('email.smtpHost')} rules={[{ required: true }]}>
-                    <Input />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name={['smtp', 'port']} label={t('email.smtpPort')} rules={[{ required: true }]}>
-                    <InputNumber style={{ width: '100%' }} />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Form.Item name={['smtp', 'username']} label={t('email.username')} rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name={['smtp', 'password']} label={preset?.authCode ? t('email.authCode') : t('email.password')} rules={[{ required: true }]}>
-                <Input.Password />
-              </Form.Item>
-              <Form.Item name={['smtp', 'use_tls']} valuePropName="checked">
-                <Switch checkedChildren="TLS" unCheckedChildren="TLS" />
-              </Form.Item>
-              <Divider orientation="left">{protocol.toUpperCase()}</Divider>
-              <Row gutter={16}>
-                <Col span={16}>
-                  <Form.Item name={['imap', 'host']} label={t('email.receiveHost')} rules={[{ required: true }]}>
-                    <Input />
-                  </Form.Item>
-                </Col>
-                <Col span={8}>
-                  <Form.Item name={['imap', 'port']} label={t('email.receivePort')} rules={[{ required: true }]}>
-                    <InputNumber style={{ width: '100%' }} />
-                  </Form.Item>
-                </Col>
-              </Row>
-              <Form.Item name={['imap', 'username']} label={t('email.username')} rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name={['imap', 'password']} label={preset?.authCode ? t('email.authCode') : t('email.password')} rules={[{ required: true }]}>
-                <Input.Password />
-              </Form.Item>
-              <Form.Item name={['imap', 'use_ssl']} valuePropName="checked">
-                <Switch checkedChildren="SSL" unCheckedChildren="SSL" />
-              </Form.Item>
-            </Form>
-          )
-        },
-        {
-          key: 'agentmail',
-          label: t('email.agentmailSettings'),
-          children: (
-            <Form form={form} layout="vertical">
-              <Form.Item name="api_key" label={t('email.apiKey')} rules={[{ required: true }]}
-                extra={<a href="https://agentmail.to/dashboard" target="_blank" rel="noopener noreferrer"><LinkOutlined /> {t('email.getApiKey')}</a>}>
-                <Input.Password />
-              </Form.Item>
-              <Form.Item name="inbox_id" label={t('email.inboxId')} rules={[{ required: true }]}>
-                <Input />
-              </Form.Item>
-              <Form.Item name="forwarding" valuePropName="checked" initialValue={true}>
-                <Switch checkedChildren={t('email.forwarding')} unCheckedChildren={t('email.forwarding')} />
-              </Form.Item>
-            </Form>
-          )
-        }
-      ]} />
+      <Form form={form} layout="vertical">
+        <Form.Item name="provider" label={t('email.provider')}>
+          <Select onChange={handleProviderChange} options={[
+            { value: 'custom', label: t('email.custom') },
+            { value: 'qq', label: t('email.qqMail') },
+            { value: 'mail163', label: t('email.mail163') },
+            { value: 'mail126', label: t('email.mail126') },
+            { value: 'gmail', label: t('email.gmail') },
+            { value: 'outlook', label: t('email.outlook') },
+          ]} />
+        </Form.Item>
+        <Form.Item name="email" label={t('email.emailAddr')} rules={[{ required: true, type: 'email' }]}>
+          <Input onChange={handleEmailChange} />
+        </Form.Item>
+        <Form.Item name="display_name" label={t('email.displayName')}>
+          <Input />
+        </Form.Item>
+
+        {isOAuth2Provider && (
+          <>
+            <Divider orientation="left" style={{ fontSize: 13 }}>{t('email.authType')}</Divider>
+            <Form.Item name="auth_type" label={t('email.authType')}>
+              <Radio.Group onChange={(e: any) => setAuthType(e.target.value)}>
+                <Radio value="basic">{t('email.basicAuth')}</Radio>
+                <Radio value="oauth2">{t('email.oauth2')}</Radio>
+              </Radio.Group>
+            </Form.Item>
+            {currentAuthType === 'oauth2' && (
+              <>
+                <Alert message={t('email.outlookOAuth2Tip')} type="info" showIcon style={{ marginBottom: 16 }}
+                  description={<span>1. Go to <a href="https://portal.azure.com/#blade/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank">Azure App Registration</a><br/>2. Register a new app (Personal accounts)<br/>3. Add API permissions: IMAP.AccessAsUser.All, SMTP.Send, Mail.Read<br/>4. Copy the Client ID</span>} />
+                <Form.Item name="oauth2_client_id" label={t('email.oauth2ClientId')} rules={[{ required: currentAuthType === 'oauth2' }]}>
+                  <Input onChange={(e: any) => setOauth2ClientId(e.target.value)} />
+                </Form.Item>
+                <Form.Item name="oauth2_client_secret" label={t('email.oauth2ClientSecret')}>
+                  <Input.Password onChange={(e: any) => setOauth2ClientSecret(e.target.value)} />
+                </Form.Item>
+                <Form.Item>
+                  {oauth2Authorized ? (
+                    <Space>
+                      <span style={{ color: '#52c41a' }}>✓ {t('email.oauth2Authorized')}</span>
+                      <Button size="small" danger onClick={handleOauth2Revoke}>{t('email.oauth2Revoke')}</Button>
+                    </Space>
+                  ) : (
+                    <Button type="primary" onClick={handleOauth2Authorize} loading={oauth2Polling}
+                      disabled={!oauth2ClientId}>
+                      {oauth2Polling ? t('email.oauth2Polling') : t('email.oauth2Authorize')}
+                    </Button>
+                  )}
+                </Form.Item>
+                {oauth2Polling && oauth2UserCode && (
+                  <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+                    message={t('email.oauth2Instructions')}
+                    description={
+                      <div>
+                        <p><strong>{t('email.oauth2VerifyUrl')}:</strong> <a href={oauth2VerifyUrl} target="_blank">{oauth2VerifyUrl}</a></p>
+                        <p><strong>{t('email.oauth2UserCode')}:</strong> <code style={{ fontSize: 18, padding: '4px 12px', background: '#f5f5f5', borderRadius: 4 }}>{oauth2UserCode}</code></p>
+                      </div>
+                    } />
+                )}
+              </>
+            )}
+          </>
+        )}
+
+        <Form.Item name="username" label={t('email.username')} rules={[{ required: true }]}>
+          <Input />
+        </Form.Item>
+        {(!isOAuth2Provider || currentAuthType === 'basic') && (
+          <Form.Item name="password" label={preset?.authCode ? t('email.authCode') : t('email.password')} rules={[{ required: true }]}
+            extra={preset?.authCode ? t('email.authCodeTip') : undefined}>
+            <Input.Password />
+          </Form.Item>
+        )}
+
+        {(
+          <>
+            <Divider orientation="left" style={{ fontSize: 13 }}>SMTP</Divider>
+            <Row gutter={16}>
+              <Col span={16}>
+                <Form.Item name="smtp_host" label={t('email.smtpHost')} rules={[{ required: true }]}>
+                  <Input />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="smtp_port" label={t('email.smtpPort')} rules={[{ required: true }]}>
+                  <InputNumber style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="smtp_use_tls" valuePropName="checked">
+              <Switch checkedChildren="TLS" unCheckedChildren="TLS" />
+            </Form.Item>
+
+            <Divider orientation="left" style={{ fontSize: 13 }}>{receiveProtocol.toUpperCase()}</Divider>
+            <Form.Item name="receive_protocol" label={t('email.protocol')}>
+              <Radio.Group onChange={(e: any) => setReceiveProtocol(e.target.value)}>
+                <Radio value="imap">IMAP {t('email.recommended')}</Radio>
+                <Radio value="pop3">POP3</Radio>
+              </Radio.Group>
+            </Form.Item>
+            <Row gutter={16}>
+              <Col span={16}>
+                <Form.Item name="imap_host" label={t('email.receiveHost')} rules={[{ required: true }]}>
+                  <Input />
+                </Form.Item>
+              </Col>
+              <Col span={8}>
+                <Form.Item name="imap_port" label={t('email.receivePort')} rules={[{ required: true }]}>
+                  <InputNumber style={{ width: '100%' }} />
+                </Form.Item>
+              </Col>
+            </Row>
+            <Form.Item name="imap_use_ssl" valuePropName="checked">
+              <Switch checkedChildren="SSL" unCheckedChildren="SSL" />
+            </Form.Item>
+            {receiveProtocol === 'pop3' && (
+              <Alert message={t('email.pop3Warning')} type="warning" showIcon style={{ marginBottom: 16 }} />
+            )}
+          </>
+        )}
+      </Form>
     </Modal>
   );
 }
@@ -1615,21 +2045,28 @@ function ShareModal({ visible, onCancel, onShare, contactIds, agents }: any) {
   );
 }
 
-function GroupModal({ visible, onCancel, onSave }: any) {
+function GroupModal({ visible, onCancel, onSave, editingGroup }: any) {
   const { t } = useTranslation();
   const [form] = Form.useForm();
   const [saving, setSaving] = React.useState(false);
+  const isEdit = !!editingGroup;
 
   React.useEffect(() => {
-    if (visible) form.resetFields();
-  }, [visible]);
+    if (visible) {
+      if (editingGroup) {
+        form.setFieldsValue({ name: editingGroup.name });
+      } else {
+        form.resetFields();
+      }
+    }
+  }, [visible, editingGroup]);
 
   const handleSave = async () => {
     try {
       const values = await form.validateFields();
       setSaving(true);
-      await onSave(values.name);
-      message.success(t('email.configSaved'));
+      await onSave(values.name, editingGroup?.id);
+      message.success(isEdit ? t('email.groupRenamed') : t('email.configSaved'));
       onCancel();
     } catch (e) {
       message.error(t('email.saveFailed'));
@@ -1639,7 +2076,7 @@ function GroupModal({ visible, onCancel, onSave }: any) {
   };
 
   return (
-    <Modal open={visible} title={t('email.newGroup')} onCancel={onCancel}
+    <Modal open={visible} title={isEdit ? t('email.editGroup') : t('email.newGroup')} onCancel={onCancel}
       footer={[
         <Button key="cancel" onClick={onCancel}>{t('email.cancel')}</Button>,
         <Button key="save" type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>{t('email.save')}</Button>,
@@ -1654,6 +2091,7 @@ function GroupModal({ visible, onCancel, onSave }: any) {
 }
 
 function MarkdownPreview({ content }: { content: string }) {
+  const dark = useIsDark();
   const html = React.useMemo(() => {
     if (!content) return '';
     let html = content
@@ -1666,24 +2104,21 @@ function MarkdownPreview({ content }: { content: string }) {
       .replace(/\*\*(.*?)\*\*/gim, '<b>$1</b>')
       .replace(/\*(.*?)\*/gim, '<i>$1</i>')
       .replace(/~~(.*?)~~/gim, '<del>$1</del>')
-      .replace(/`([^`]+)`/gim, '<code style="background:#f0f0f0;padding:2px 4px;border-radius:3px;">$1</code>')
+      .replace(/`([^`]+)`/gim, `<code style="background:${dark ? '#333' : '#f0f0f0'};color:${dark ? '#e0e0e0' : '#333'};padding:2px 4px;border-radius:3px;">$1</code>`)
       .replace(/^\* (.*$)/gim, '<ul><li>$1</li></ul>')
       .replace(/^\- (.*$)/gim, '<ul><li>$1</li></ul>')
       .replace(/^\d+\. (.*$)/gim, '<ol><li>$1</li></ol>')
       .replace(/\n/gim, '<br />');
     return html;
-  }, [content]);
+  }, [content, dark]);
 
-  return <div dangerouslySetInnerHTML={{ __html: html }} style={{ padding: 12, border: '1px solid #d9d9d9', borderRadius: 6, minHeight: 200, background: '#fafafa' }} />;
+  return <div dangerouslySetInnerHTML={{ __html: html }} style={{ padding: 12, border: `1px solid ${dark ? '#444' : '#d9d9d9'}`, borderRadius: 6, minHeight: 200, background: dark ? '#1a1a1a' : '#fafafa', color: dark ? '#e0e0e0' : 'inherit' }} />;
 }
 
 function HtmlPreview({ content }: { content: string }) {
-  // XSS 防护：使用简单的 HTML 标签白名单过滤
+  const dark = useIsDark();
   const sanitized = React.useMemo(() => {
     if (!content) return '';
-    // 允许的 HTML 标签列表
-    const allowedTags = ['p', 'br', 'b', 'i', 'u', 'strong', 'em', 'a', 'ul', 'ol', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'div', 'span', 'table', 'tr', 'td', 'th', 'thead', 'tbody', 'img'];
-    // 移除 script、style、iframe、object、embed 等危险标签及其内容
     let cleaned = content
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
@@ -1694,17 +2129,18 @@ function HtmlPreview({ content }: { content: string }) {
       .replace(/on\w+\s*=/gi, '');
     return cleaned;
   }, [content]);
-  return <div dangerouslySetInnerHTML={{ __html: sanitized }} style={{ padding: 12, border: '1px solid #d9d9d9', borderRadius: 6, minHeight: 200, background: '#fafafa' }} />;
+  return <div dangerouslySetInnerHTML={{ __html: sanitized }} style={{ padding: 12, border: `1px solid ${dark ? '#444' : '#d9d9d9'}`, borderRadius: 6, minHeight: 200, background: dark ? '#1a1a1a' : '#fafafa', color: dark ? '#e0e0e0' : 'inherit' }} />;
 }
 
 type EditorMode = 'plain' | 'markdown' | 'html';
 
 function RichTextEditor({ value, onChange, mode }: { value: string; onChange: (v: string) => void; mode: EditorMode }) {
   const { t } = useTranslation();
+  const dark = useIsDark();
   const textareaRef = React.useRef<HTMLTextAreaElement>(null);
   const [fontSize, setFontSize] = React.useState('14px');
-  const [fontColor, setFontColor] = React.useState('#000000');
-  const [bgColor, setBgColor] = React.useState('#ffffff');
+  const [fontColor, setFontColor] = React.useState(dark ? '#e0e0e0' : '#000000');
+  const [bgColor, setBgColor] = React.useState(dark ? '#333333' : '#ffffff');
   const historyRef = React.useRef<string[]>([value || '']);
   const historyIndexRef = React.useRef(0);
 
@@ -1815,7 +2251,7 @@ function RichTextEditor({ value, onChange, mode }: { value: string; onChange: (v
 
   return (
     <div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 8, border: '1px solid #d9d9d9', borderBottom: 'none', borderRadius: '6px 6px 0 0', background: '#fafafa', alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, padding: 8, border: `1px solid ${dark ? '#444' : '#d9d9d9'}`, borderBottom: 'none', borderRadius: '6px 6px 0 0', background: dark ? '#1a1a1a' : '#fafafa', alignItems: 'center' }}>
         {toolbarItems.map((item, i) => (
           <Tooltip key={i} title={item.title}>
             <Button size="small" icon={item.icon} onClick={item.onClick} />
@@ -1866,9 +2302,18 @@ function RichTextEditor({ value, onChange, mode }: { value: string; onChange: (v
         </Tooltip>
       </div>
       <Input.TextArea ref={textareaRef} rows={12} value={value} onChange={handleChange}
-        style={{ borderRadius: '0 0 6px 6px', fontFamily: mode === 'html' ? 'monospace' : 'inherit' }} />
+        style={{ borderRadius: '0 0 6px 6px', fontFamily: mode === 'html' ? 'monospace' : 'inherit', background: dark ? '#141414' : undefined, color: dark ? '#e0e0e0' : undefined }} />
     </div>
   );
+}
+
+function parseAttachments(val: any): any[] {
+  if (!val) return [];
+  if (Array.isArray(val)) return val;
+  if (typeof val === 'string') {
+    try { const parsed = JSON.parse(val); return Array.isArray(parsed) ? parsed : []; } catch { return []; }
+  }
+  return [];
 }
 
 function ComposeModal({ visible, onCancel, onSend, onSaveDraft, contacts, editingDraft }: any) {
@@ -1893,7 +2338,7 @@ function ComposeModal({ visible, onCancel, onSend, onSaveDraft, contacts, editin
         subject: editingDraft.subject || '',
         content: editingDraft.content || '',
       });
-      setAttachments(editingDraft.attachments || []);
+      setAttachments(parseAttachments(editingDraft.attachments));
     } else {
       setEditorMode('plain');
       setContentValue('');
@@ -2051,12 +2496,13 @@ function ComposeModal({ visible, onCancel, onSend, onSaveDraft, contacts, editin
 
 function AttachmentList({ attachments }: { attachments: any[] }) {
   const { t } = useTranslation();
-  if (!attachments || attachments.length === 0) return null;
+  const items = parseAttachments(attachments);
+  if (items.length === 0) return null;
   return (
     <div style={{ marginTop: 8 }}>
       <Text type="secondary" style={{ fontSize: 12 }}>{t('email.attachments')}:</Text>
       <Space size={4} wrap style={{ marginTop: 4 }}>
-        {attachments.map((a: any, i: number) => (
+        {items.map((a: any, i: number) => (
           <Tag key={i} icon={<FileOutlined />} size="small">
             {a.name} ({formatFileSize(a.size)})
           </Tag>
@@ -2104,7 +2550,7 @@ function UninstallModal({ visible, onCancel, onUninstall, agentId }: any) {
 function AgentRulesList() {
   const { t } = useTranslation();
   const [rules, setRules] = React.useState<any[]>([]);
-  const agentId = localStorage.getItem('qwenpaw-last-used-agent') || 'default';
+  const agentId = getCurrentAgentId();
   
   React.useEffect(() => {
     const rulesKey = `agentmail_rules_${agentId}`;
@@ -2246,6 +2692,7 @@ function EmailPage() {
   const [shareContactIds, setShareContactIds] = React.useState<number[]>([]);
   const [selectedContacts, setSelectedContacts] = React.useState<number[]>([]);
   const [groupModalVisible, setGroupModalVisible] = React.useState(false);
+  const [editingGroup, setEditingGroup] = React.useState<any>(null);
 
   const [inboxEmails, setInboxEmails] = React.useState<any[]>([]);
   const [inboxTotal, setInboxTotal] = React.useState(0);
@@ -2272,46 +2719,19 @@ function EmailPage() {
 
   const [backupLoading, setBackupLoading] = React.useState(false);
   const [uninstallVisible, setUninstallVisible] = React.useState(false);
+  const [listenStatus, setListenStatus] = React.useState(false);
   
   // Agent 规则管理状态
   const [ruleModalVisible, setRuleModalVisible] = React.useState(false);
   const [editingRule, setEditingRule] = React.useState<any>(null);
 
   // Agent ID 从 QwenPaw store 实时获取，支持切换
-  const [agentId, setAgentId] = React.useState(() => {
-    // QwenPaw 使用 qwenpaw-last-used-agent 存储当前智能体
-    const qwLastUsed = localStorage.getItem('qwenpaw-last-used-agent');
-    if (qwLastUsed) return qwLastUsed;
-    // 兼容旧版
-    const match = window.location.pathname.match(/\/agent\/([^\/]+)/);
-    return match ? match[1] : localStorage.getItem('current_agent_id') || 'default';
-  });
+  const [agentId, setAgentId] = React.useState(() => getCurrentAgentId());
 
   const agentName = React.useMemo(() => {
-    // 1. 尝试从 QwenPaw 新版 zustand store 读取
-    try {
-      const storageData = localStorage.getItem('qwenpaw-agent-storage');
-      if (storageData) {
-        const parsed = JSON.parse(storageData);
-        const state = parsed?.state || parsed;
-        if (state?.agents && Array.isArray(state.agents)) {
-          const agent = state.agents.find((a: any) => a.id === agentId);
-          if (agent) return agent.name || agentId;
-        }
-      }
-    } catch { }
-
-    // 2. 尝试从旧版 qwenpaw_agents 读取（兼容旧版本）
-    try {
-      const agentsData = localStorage.getItem('qwenpaw_agents');
-      if (agentsData) {
-        const agents = JSON.parse(agentsData);
-        const agent = agents.find((a: any) => a.id === agentId || a.agent_id === agentId);
-        if (agent) return agent.name || agentId;
-      }
-    } catch { }
-
-    return agentId;
+    const allAgentsList = getAllAgents();
+    const agent = allAgentsList.find((a: any) => a.id === agentId);
+    return agent ? agent.name : agentId;
   }, [agentId]);
 
   const allAgents = React.useMemo(() => getAllAgents().filter(a => a.id !== agentId), [agentId]);
@@ -2319,11 +2739,9 @@ function EmailPage() {
   // 监听 QwenPaw Agent 切换
   React.useEffect(() => {
     const checkAgentChange = () => {
-      // QwenPaw 使用 qwenpaw-last-used-agent 存储当前智能体
-      const newAgentId = localStorage.getItem('qwenpaw-last-used-agent') || 'default';
+      const newAgentId = getCurrentAgentId();
       if (newAgentId !== agentId) {
         setAgentId(newAgentId);
-        // 重置所有状态
         setContacts([]);
         setContactGroups([]);
         setContactTotal(0);
@@ -2349,17 +2767,16 @@ function EmailPage() {
       }
     };
 
-    // 监听 storage 事件（跨标签页同步）
-    window.addEventListener('storage', (e) => {
-      if (e.key === 'qwenpaw-last-used-agent') {
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'qwenpaw-last-used-agent' || e.key === 'qwenpaw-agent-storage') {
         checkAgentChange();
       }
-    });
-    // 定时检查
+    };
+    window.addEventListener('storage', handleStorage);
     const interval = setInterval(checkAgentChange, 500);
 
     return () => {
-      window.removeEventListener('storage', checkAgentChange);
+      window.removeEventListener('storage', handleStorage);
       clearInterval(interval);
     };
   }, [agentId]);
@@ -2371,6 +2788,10 @@ function EmailPage() {
       setAgentConfig(res.config);
     } catch (e) { setAgentConfig(null); }
     setConfigLoading(false);
+    try {
+      const listenRes = await apiGet(`/${agentId}/listen/status`, agentId);
+      setListenStatus(listenRes.listening || false);
+    } catch (e) { }
   };
 
   const fetchContacts = async (page = contactPage, search = contactSearch, group = contactGroup) => {
@@ -2400,6 +2821,20 @@ function EmailPage() {
       setInboxEmails(res.items || []);
       setInboxTotal(res.total || 0);
     } catch (e) { message.error('Failed to load inbox'); }
+    setLoading(false);
+  };
+
+  const syncInbox = async () => {
+    setLoading(true);
+    try {
+      const res = await apiPost(`/${agentId}/sync?max_emails=50`, {}, agentId);
+      if (res.success) {
+        message.success(`同步完成: 服务器${res.total_on_server || 0}封, 新同步${res.synced || 0}封`);
+        fetchInbox();
+      } else {
+        message.error(res.error || t('email.connectionFailed'));
+      }
+    } catch (e) { message.error(t('email.connectionFailed')); }
     setLoading(false);
   };
 
@@ -2445,7 +2880,7 @@ function EmailPage() {
   React.useEffect(() => { if (activeTab === 'trash') fetchTrash(); }, [activeTab, trashPage, trashFilter, agentId]);
 
   const saveConfig = async (values: any) => {
-    await apiPost(`/config/${agentId}/hybrid`, values, agentId);
+    await apiPost(`/config/${agentId}`, values, agentId);
     await fetchConfig();
   };
 
@@ -2462,14 +2897,13 @@ function EmailPage() {
 
   const getConfigMode = () => {
     if (!agentConfig) return 'none';
-    if (agentConfig.hybrid) return 'hybrid';
+    if (agentConfig.email) return 'configured';
     return 'none';
   };
 
   const getConfigEmail = () => {
     if (!agentConfig) return '--';
-    if (agentConfig.hybrid) return agentConfig.hybrid.email;
-    return '--';
+    return agentConfig.email || '--';
   };
 
   const handleCreateContact = async (values: any) => {
@@ -2495,9 +2929,22 @@ function EmailPage() {
     fetchContacts();
   };
 
-  const handleCreateGroup = async (name: string) => {
-    await apiPost(`/${agentId}/contact-groups`, { name }, agentId);
+  const handleSaveGroup = async (name: string, groupId?: number) => {
+    if (groupId) {
+      await apiPut(`/${agentId}/contact-groups/${groupId}`, { name }, agentId);
+    } else {
+      await apiPost(`/${agentId}/contact-groups`, { name }, agentId);
+    }
+    setEditingGroup(null);
     fetchContactGroups();
+    fetchContacts();
+  };
+
+  const handleDeleteGroup = async (groupId: number) => {
+    await apiDelete(`/${agentId}/contact-groups/${groupId}`, {}, agentId);
+    message.success(t('email.groupDeleted'));
+    fetchContactGroups();
+    fetchContacts();
   };
 
   const handleArchiveInbox = async (ids: number[]) => {
@@ -2881,8 +3328,8 @@ ${memoryData.body || 'N/A'}
   };
 
   // Agent 集成：获取当前 Agent ID
-  const getCurrentAgentId = () => {
-    return localStorage.getItem('qwenpaw-last-used-agent') || 'default';
+  const getCurrentAgentIdLocal = () => {
+    return getCurrentAgentId();
   };
 
   const renderInboxTab = () => (
@@ -2890,6 +3337,7 @@ ${memoryData.body || 'N/A'}
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
         <Space>
           <Button type="primary" icon={<ReloadOutlined />} loading={loading} onClick={() => fetchInbox()}>{t('email.refresh')}</Button>
+          <Button icon={<CloudUploadOutlined />} loading={loading} onClick={syncInbox}>{t('email.syncInbox')}</Button>
           <Button icon={<EditOutlined />} onClick={() => { setEditingDraft(null); setComposeVisible(true); }}>{t('email.compose')}</Button>
         </Space>
         <Space>
@@ -2929,10 +3377,12 @@ ${memoryData.body || 'N/A'}
               <Tooltip title={t('agent.generateReply')}>
                 <Button type="link" size="small" icon={<EditOutlined />} onClick={() => {
                   const reply = generateSmartReply(record);
+                  setEditingDraft({
+                    to: [record.sender_email],
+                    subject: `Re: ${record.subject}`,
+                    content: reply,
+                  });
                   setComposeVisible(true);
-                  setComposeTo(record.sender_email);
-                  setComposeSubject(`Re: ${record.subject}`);
-                  setComposeBody(reply);
                 }} />
               </Tooltip>
               <Button type="link" size="small" icon={<FolderOpenOutlined />} onClick={() => handleArchiveInbox([record.id])} />
@@ -3046,10 +3496,32 @@ ${memoryData.body || 'N/A'}
               <Button danger icon={<DeleteOutlined />} onClick={() => handleDeleteContacts(selectedContacts)}>{t('email.batchDelete')}</Button>
             </>
           )}
-          <Button icon={<PlusOutlined />} onClick={() => setGroupModalVisible(true)}>{t('email.newGroup')}</Button>
+          <Button icon={<PlusOutlined />} onClick={() => { setEditingGroup(null); setGroupModalVisible(true); }}>{t('email.newGroup')}</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={() => { setEditingContact(null); setContactModalVisible(true); }}>{t('email.new')}</Button>
         </Space>
       </div>
+      {contactGroups.length > 0 && (
+        <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center' }}>
+          <Text type="secondary" style={{ fontSize: 12, marginRight: 4 }}>{t('email.group')}:</Text>
+          {contactGroups.map((g: any) => (
+            <Tag key={g.id} color={contactGroup === g.name ? 'blue' : 'default'} style={{ cursor: 'pointer' }}
+              onClick={() => { setContactGroup(g.name); setContactPage(1); }}
+              closable={g.name !== 'default'}
+              onClose={(e: any) => { e.preventDefault(); }}
+              closeIcon={
+                <span style={{ display: 'inline-flex', gap: 2, marginLeft: 4 }}>
+                  <EditOutlined style={{ fontSize: 10 }} onClick={(e: any) => { e.stopPropagation(); setEditingGroup(g); setGroupModalVisible(true); }} />
+                  <Popconfirm title={t('email.confirmDeleteGroup')} onConfirm={(e: any) => { e?.stopPropagation(); handleDeleteGroup(g.id); }} onCancel={(e: any) => e?.stopPropagation()}>
+                    <CloseOutlined style={{ fontSize: 10 }} onClick={(e: any) => e.stopPropagation()} />
+                  </Popconfirm>
+                </span>
+              }
+            >
+              {g.name}
+            </Tag>
+          ))}
+        </div>
+      )}
       <Table
         rowSelection={{ selectedRowKeys: selectedContacts, onChange: (keys: any) => setSelectedContacts(keys) }}
         columns={[
@@ -3084,8 +3556,8 @@ ${memoryData.body || 'N/A'}
         initialValues={editingContact} groups={contactGroups} />
       <ShareModal visible={shareVisible} onCancel={() => setShareVisible(false)}
         onShare={handleShareContacts} contactIds={shareContactIds} agents={allAgents} />
-      <GroupModal visible={groupModalVisible} onCancel={() => setGroupModalVisible(false)}
-        onSave={handleCreateGroup} />
+      <GroupModal visible={groupModalVisible} onCancel={() => { setGroupModalVisible(false); setEditingGroup(null); }}
+        onSave={handleSaveGroup} editingGroup={editingGroup} />
     </div>
   );
 
@@ -3164,24 +3636,13 @@ ${memoryData.body || 'N/A'}
     return (
       <Spin spinning={configLoading} tip={t('email.loading')}>
         <div>
-          <Card title={t('email.hybridPrinciple')} style={{ marginBottom: 16 }}>
-            <Alert message={t('email.hybridPrincipleDesc')} type="info" showIcon />
-          </Card>
-
-          <Card title={t('email.hybridMode')} style={{ marginBottom: 16 }}
+          <Card title={t('email.emailConfig')} style={{ marginBottom: 16 }}
             extra={
               <Button type="primary" icon={<SettingOutlined />} onClick={() => setConfigModalVisible(true)}>
                 {hasConfig ? t('email.edit') : t('email.new')}
               </Button>
             }>
-            <Alert message={t('email.hybridTip')} type="info" showIcon style={{ marginBottom: 16 }} />
-            <Form layout="inline">
-              <Form.Item label={t('email.forwarding')}>
-                <Switch checked={agentConfig?.hybrid?.forwarding || false} onChange={async (checked: boolean) => {
-                  await saveConfig({ ...agentConfig?.hybrid, forwarding: checked });
-                }} />
-              </Form.Item>
-            </Form>
+            <Alert message={t('email.configTip')} type="info" showIcon style={{ marginBottom: 16 }} />
           </Card>
 
           <Card title={t('email.backup')} style={{ marginBottom: 16 }}
@@ -3189,13 +3650,47 @@ ${memoryData.body || 'N/A'}
             <Alert message={t('email.backupPath')} type="info" showIcon />
           </Card>
 
+          <Card title={t('email.pushListen')} style={{ marginBottom: 16 }}
+            extra={<Space>
+              <Badge status={listenStatus ? 'success' : 'default'} text={listenStatus ? t('email.listening') : t('email.stopped')} />
+              {listenStatus ? (
+                <Button danger size="small" icon={<CloseOutlined />} onClick={async () => {
+                  const res = await apiPost(`/${agentId}/listen/stop`, {}, agentId);
+                  if (res.success) { setListenStatus(false); message.success(t('email.listenStopped')); }
+                  else { message.error(res.error || 'Failed'); }
+                }}>{t('email.stopListen')}</Button>
+              ) : (
+                <Button type="primary" size="small" icon={<ApiOutlined />} onClick={async () => {
+                  const res = await apiPost(`/${agentId}/listen/start`, {}, agentId);
+                  if (res.success) { setListenStatus(true); message.success(t('email.listenStarted')); }
+                  else { message.error(res.error || 'Failed'); }
+                }}>{t('email.startListen')}</Button>
+              )}
+            </Space>}>
+            <Alert message={t('email.pushListenDesc')} type="info" showIcon />
+          </Card>
+
           <Card title={t('email.currentConfig')}
             extra={hasConfig && (
-              <Button danger icon={<DeleteOutlined />} size="small" onClick={deleteConfig}>{t('email.delete')}</Button>
+              <Space>
+                <Button icon={<ApiOutlined />} size="small" loading={configLoading} onClick={async () => {
+                  setConfigLoading(true);
+                  try {
+                    const res = await apiPost(`/${agentId}/test-connection`, {}, agentId);
+                    if (res.success) { message.success(t('email.connectionSuccess')); }
+                    else { message.error(res.error || t('email.connectionFailed')); }
+                  } catch { message.error(t('email.connectionFailed')); }
+                  setConfigLoading(false);
+                }}>{t('email.testConnection')}</Button>
+                <Button danger icon={<DeleteOutlined />} size="small" onClick={deleteConfig}>{t('email.delete')}</Button>
+              </Space>
             )}>
-            <p>{t('email.mode')}: <Tag color={hasConfig ? 'green' : 'blue'}>{hasConfig ? t('email.hybridMode') : t('email.notConfigured')}</Tag></p>
-            <p>{t('email.emailAddr')}: <Text type="secondary">{email}</Text></p>
-            <p>{t('email.status')}: <Badge status={hasConfig ? 'success' : 'default'} text={hasConfig ? t('email.connected') : t('email.disconnected')} /></p>
+            <p>{t('email.status')}: <Badge status={hasConfig ? 'processing' : 'default'} text={hasConfig ? t('email.configured') : t('email.notConfigured')} /></p>
+            {hasConfig && <>
+              <p>{t('email.emailAddr')}: <Text type="secondary">{email}</Text></p>
+              <p>SMTP: <Tag color="blue">{agentConfig?.smtp?.host || '-'}:{agentConfig?.smtp?.port || '-'}</Tag></p>
+              <p>{t('email.protocol')}: <Tag color="blue">{agentConfig?.receive_protocol?.toUpperCase() || 'IMAP'}</Tag> {agentConfig?.imap?.host || '-'}:{agentConfig?.imap?.port || '-'}</p>
+            </>}
           </Card>
 
           <Card title={t('agent.emailRules')} style={{ marginTop: 16, marginBottom: 16 }}
@@ -3209,8 +3704,8 @@ ${memoryData.body || 'N/A'}
           </Card>
         </div>
 
-        <HybridConfigModal visible={configModalVisible} onCancel={() => setConfigModalVisible(false)}
-          onSave={(v: any) => saveConfig(v)} initialValues={agentConfig?.hybrid} />
+        <EmailConfigModal visible={configModalVisible} onCancel={() => setConfigModalVisible(false)}
+          onSave={(v: any) => saveConfig(v)} initialValues={agentConfig} />
         <UninstallModal visible={uninstallVisible} onCancel={() => setUninstallVisible(false)}
           onUninstall={handleUninstall} agentId={agentId} />
         <AgentRuleModal visible={ruleModalVisible} onCancel={() => { setRuleModalVisible(false); setEditingRule(null); }}

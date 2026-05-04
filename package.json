@@ -1,6 +1,6 @@
 {
   "name": "agentmail",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "邮箱管理插件，采用混合模式同时支持传统邮箱和AgentMail.to",
   "scripts": {
     "build": "vite build",

@@ -2,6 +2,7 @@
 node_modules/
 __pycache__/
 *.pyc
+*.pyo
 
 # Build outputs
 dist/
@@ -26,5 +27,14 @@ npm-debug.log*
 .env.local
 
 # Test coverage
+.coverage
 coverage/
 .nyc_output/
+htmlcov/
+
+# Python
+*.egg
+.eggs/
+
+# Backup files
+*.bak

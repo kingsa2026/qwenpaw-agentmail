@@ -5,6 +5,8 @@ AgentMail CLI 命令处理器
 提供完整的 CLI 接口，覆盖 UI 所有功能：
   联系人管理：/agentmail-contacts, /agentmail-share
   邮件管理：/agentmail-inbox, /agentmail-sent, /agentmail-drafts
+  邮件操作：/agentmail-send, /agentmail-read, /agentmail-sync
+  监听控制：/agentmail-listen
   回收站：/agentmail-trash
   备份：/agentmail-backup
   配置：/agentmail-config
@@ -21,13 +23,70 @@ from typing import Any, Dict, List
 logger = logging.getLogger(__name__)
 
 STORAGE_KEY = "agentmail_data"
+API_BASE = "http://127.0.0.1:18088/api/v1/email"
+
+_qwenpaw_working_dir = os.environ.get("QWENPAW_WORKING_DIR", os.environ.get("COPAW_WORKING_DIR", ""))
+if _qwenpaw_working_dir:
+    _QWENPAW_HOME = Path(_qwenpaw_working_dir).expanduser().resolve()
+else:
+    _QWENPAW_HOME = Path.home() / ".qwenpaw"
+
+
+def _get_agent_mail_dir(agent_id: str) -> Path:
+    """获取 Agent 的 mail 数据目录（与 backend/database.py 一致）"""
+    return _QWENPAW_HOME / "workspaces" / agent_id / "mail"
+
+
+def _get_agent_mail_file(agent_id: str, filename: str) -> Path:
+    """获取 Agent mail 目录下的文件路径"""
+    return _get_agent_mail_dir(agent_id) / filename
+
+
+def _api_get(path: str, agent_id: str) -> Dict[str, Any]:
+    try:
+        import httpx
+        with httpx.Client(base_url=API_BASE, timeout=15) as client:
+            resp = client.get(path, headers={"X-Agent-Id": agent_id})
+            if resp.status_code == 200:
+                return resp.json()
+            return {"success": False, "error": f"HTTP {resp.status_code}"}
+    except ImportError:
+        return {"success": False, "error": "httpx not installed"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _api_post(path: str, data: Dict = None, agent_id: str = "") -> Dict[str, Any]:
+    try:
+        import httpx
+        with httpx.Client(base_url=API_BASE, timeout=15) as client:
+            resp = client.post(path, json=data or {}, headers={"X-Agent-Id": agent_id})
+            if resp.status_code == 200:
+                return resp.json()
+            return {"success": False, "error": f"HTTP {resp.status_code}"}
+    except ImportError:
+        return {"success": False, "error": "httpx not installed"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+
+def _api_delete(path: str, agent_id: str) -> Dict[str, Any]:
+    try:
+        import httpx
+        with httpx.Client(base_url=API_BASE, timeout=15) as client:
+            resp = client.delete(path, headers={"X-Agent-Id": agent_id})
+            if resp.status_code == 200:
+                return resp.json()
+            return {"success": False, "error": f"HTTP {resp.status_code}"}
+    except ImportError:
+        return {"success": False, "error": "httpx not installed"}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 def _get_agent_storage(agent_id: str) -> Dict[str, Any]:
-    """获取指定 Agent 的本地存储数据"""
     storage_key = f"{STORAGE_KEY}_{agent_id}"
-    # 存储路径: ~/.qwenpaw/agents/{agent_id}/mail/cli_storage.json
-    storage_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{storage_key}.json"
+    storage_path = _get_agent_mail_file(agent_id, f"{storage_key}.json")
 
     if storage_path.exists():
         try:
@@ -50,15 +109,14 @@ def _get_agent_storage(agent_id: str) -> Dict[str, Any]:
 
 
 def _save_agent_storage(agent_id: str, data: Dict[str, Any]) -> bool:
-    """保存指定 Agent 的本地存储数据"""
     storage_key = f"{STORAGE_KEY}_{agent_id}"
-    # 存储路径: ~/.qwenpaw/agents/{agent_id}/mail/cli_storage.json
-    storage_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{storage_key}.json"
+    storage_path = _get_agent_mail_file(agent_id, f"{storage_key}.json")
 
     try:
-        storage_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        storage_path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
         with open(storage_path, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
+        os.chmod(storage_path, 0o755)
         return True
     except (OSError, TypeError) as e:
         logger.error(f"保存存储失败: {e}")
@@ -66,15 +124,12 @@ def _save_agent_storage(agent_id: str, data: Dict[str, Any]) -> bool:
 
 
 def _get_all_agents() -> List[Dict[str, str]]:
-    """获取所有 Agent 列表"""
     agents = []
 
-    # 1. 尝试从 QwenPaw 新版 zustand store 读取
     try:
-        import os
         storage_data = os.environ.get("QWENPAW_AGENT_STORAGE")
         if not storage_data:
-            storage_path = Path.home() / ".qwenpaw" / "agent_storage.json"
+            storage_path = _QWENPAW_HOME / "agent_storage.json"
             if storage_path.exists():
                 with open(storage_path, "r", encoding="utf-8") as f:
                     storage_data = f.read()
@@ -89,10 +144,9 @@ def _get_all_agents() -> List[Dict[str, str]]:
     except Exception:
         pass
 
-    # 2. 尝试从旧版存储读取
     if not agents:
         try:
-            storage_path = Path.home() / ".qwenpaw" / "agents.json"
+            storage_path = _QWENPAW_HOME / "agents.json"
             if storage_path.exists():
                 with open(storage_path, "r", encoding="utf-8") as f:
                     data = json.load(f)
@@ -126,8 +180,12 @@ class ListContactsCommand:
         group_filter = args.get("group", "")
         search_query = args.get("search", "")
 
-        data = _get_agent_storage(agent_id)
-        contacts = data.get("contacts", [])
+        res = _api_get(f"/{agent_id}/contacts", agent_id)
+        if res.get("success"):
+            contacts = res.get("items", [])
+        else:
+            data = _get_agent_storage(agent_id)
+            contacts = data.get("contacts", [])
 
         if not contacts:
             return "**AgentMail**: 当前没有联系人。"
@@ -152,7 +210,7 @@ class ListContactsCommand:
             try:
                 shared_list = json.loads(shared) if isinstance(shared, str) else shared
                 shared_count = len(shared_list) if isinstance(shared_list, list) else 0
-            except:
+            except Exception:
                 shared_count = 0
 
             lines.append(
@@ -239,7 +297,7 @@ class ShareContactsCommand:
                 shared_list = json.loads(shared) if isinstance(shared, str) else shared
                 if not isinstance(shared_list, list):
                     shared_list = []
-            except:
+            except Exception:
                 shared_list = []
 
             shared_list.extend(target_agent_ids)
@@ -274,35 +332,28 @@ class ListInboxCommand:
 
         page = int(args.get("page", 1))
         unread_only = args.get("unread", False)
-        search = args.get("search", "")
 
-        data = _get_agent_storage(agent_id)
-        inbox = data.get("inbox", [])
+        res = _api_get(f"/{agent_id}/inbox?page={page}&page_size=10", agent_id)
+        if res.get("success"):
+            inbox = res.get("items", [])
+            total = res.get("total", 0)
+        else:
+            data = _get_agent_storage(agent_id)
+            inbox = data.get("inbox", [])
+            total = len(inbox)
 
         if not inbox:
-            return "**AgentMail**: 收件箱为空。"
+            return "**AgentMail**: 收件箱为空。使用 `/agentmail-sync` 同步邮件。"
 
         filtered = inbox
         if unread_only:
             filtered = [e for e in filtered if not e.get("is_read")]
-        if search:
-            search_lower = search.lower()
-            filtered = [
-                e for e in filtered
-                if search_lower in e.get("subject", "").lower()
-                or search_lower in e.get("sender_email", "").lower()
-            ]
 
         if not filtered:
-            return "**AgentMail**: 没有找到匹配的邮件。"
+            return "**AgentMail**: 没有未读邮件。"
 
-        page_size = 10
-        start = (page - 1) * page_size
-        end = start + page_size
-        page_items = filtered[start:end]
-
-        lines = [f"**AgentMail 收件箱** ({len(filtered)} 封，第 {page} 页)", ""]
-        for i, email in enumerate(page_items, start + 1):
+        lines = [f"**AgentMail 收件箱** ({total} 封，第 {page} 页)", ""]
+        for i, email in enumerate(filtered, 1):
             status = "📧" if not email.get("is_read") else "✓"
             lines.append(
                 f"{status} **{email.get('subject', '无主题')}** "
@@ -311,12 +362,13 @@ class ListInboxCommand:
                 f"({email.get('date', '')})"
             )
 
-        total_pages = (len(filtered) + page_size - 1) // page_size
+        total_pages = max(1, (total + 9) // 10)
         if total_pages > 1:
             lines.append(f"\n第 {page}/{total_pages} 页，使用 `--page N` 查看更多")
 
         lines.append("\n---")
-        lines.append("使用 `/agentmail-read --id ID` 查看邮件详情")
+        lines.append("查看详情: `/agentmail-read --id ID`")
+        lines.append("同步邮件: `/agentmail-sync`")
 
         return "\n".join(lines)
 
@@ -336,38 +388,29 @@ class ListSentCommand:
         args = getattr(context, "args", {})
 
         page = int(args.get("page", 1))
-        search = args.get("search", "")
 
-        data = _get_agent_storage(agent_id)
-        sent = data.get("sent", [])
+        res = _api_get(f"/{agent_id}/sent?page={page}&page_size=10", agent_id)
+        if res.get("success"):
+            sent = res.get("items", [])
+            total = res.get("total", 0)
+        else:
+            data = _get_agent_storage(agent_id)
+            sent = data.get("sent", [])
+            total = len(sent)
 
         if not sent:
             return "**AgentMail**: 已发送邮件为空。"
 
-        filtered = sent
-        if search:
-            search_lower = search.lower()
-            filtered = [
-                e for e in filtered
-                if search_lower in e.get("subject", "").lower()
-                or search_lower in e.get("to_email", "").lower()
-            ]
-
-        page_size = 10
-        start = (page - 1) * page_size
-        end = start + page_size
-        page_items = filtered[start:end]
-
-        lines = [f"**AgentMail 已发送** ({len(filtered)} 封，第 {page} 页)", ""]
-        for i, email in enumerate(page_items, start + 1):
+        lines = [f"**AgentMail 已发送** ({total} 封，第 {page} 页)", ""]
+        for i, email in enumerate(sent, 1):
             lines.append(
                 f"✓ **{email.get('subject', '无主题')}** "
-                f"收件人: {email.get('to_email', '未知')} "
+                f"收件人: {email.get('recipient', email.get('to_email', '未知'))} "
                 f"[ID: {email.get('id')}] "
-                f"({email.get('date', '')})"
+                f"({email.get('sent_at', email.get('date', ''))})"
             )
 
-        total_pages = (len(filtered) + page_size - 1) // page_size
+        total_pages = max(1, (total + 9) // 10)
         if total_pages > 1:
             lines.append(f"\n第 {page}/{total_pages} 页，使用 `--page N` 查看更多")
 
@@ -390,32 +433,33 @@ class ListDraftsCommand:
 
         page = int(args.get("page", 1))
 
-        data = _get_agent_storage(agent_id)
-        drafts = data.get("drafts", [])
+        res = _api_get(f"/{agent_id}/drafts?page={page}&page_size=10", agent_id)
+        if res.get("success"):
+            drafts = res.get("items", [])
+            total = res.get("total", 0)
+        else:
+            data = _get_agent_storage(agent_id)
+            drafts = data.get("drafts", [])
+            total = len(drafts)
 
         if not drafts:
             return "**AgentMail**: 草稿箱为空。"
 
-        page_size = 10
-        start = (page - 1) * page_size
-        end = start + page_size
-        page_items = drafts[start:end]
-
-        lines = [f"**AgentMail 草稿箱** ({len(drafts)} 封，第 {page} 页)", ""]
-        for i, draft in enumerate(page_items, start + 1):
+        lines = [f"**AgentMail 草稿箱** ({total} 封，第 {page} 页)", ""]
+        for i, draft in enumerate(drafts, 1):
             lines.append(
                 f"📝 **{draft.get('subject', '无主题')}** "
-                f"收件人: {draft.get('to_email', '未指定')} "
+                f"收件人: {draft.get('recipient', draft.get('to_email', '未指定'))} "
                 f"[ID: {draft.get('id')}] "
                 f"({draft.get('updated_at', '')})"
             )
 
-        total_pages = (len(drafts) + page_size - 1) // page_size
+        total_pages = max(1, (total + 9) // 10)
         if total_pages > 1:
             lines.append(f"\n第 {page}/{total_pages} 页，使用 `--page N` 查看更多")
 
         lines.append("\n---")
-        lines.append("使用 `/agentmail-compose --to ... --subject ...` 写新邮件")
+        lines.append("使用 `/agentmail-send --to ... --subject ...` 写新邮件")
 
         return "\n".join(lines)
 
@@ -522,15 +566,14 @@ class BackupCommand:
         list_mode = args.get("list", False)
 
         backups_key = f"{STORAGE_KEY}_{agent_id}_backups"
-        # 备份路径: ~/.qwenpaw/agents/{agent_id}/mail/backups.json
-        backups_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{backups_key}.json"
+        backups_path = _get_agent_mail_file(agent_id, f"{backups_key}.json")
 
         if list_mode:
             if backups_path.exists():
                 try:
                     with open(backups_path, "r", encoding="utf-8") as f:
                         backups = json.load(f)
-                except:
+                except Exception:
                     backups = []
             else:
                 backups = []
@@ -548,7 +591,6 @@ class BackupCommand:
 
             return "\n".join(lines)
 
-        # 创建备份
         data = _get_agent_storage(agent_id)
         backup = {
             "time": __import__("datetime").datetime.now().isoformat(),
@@ -562,7 +604,7 @@ class BackupCommand:
             try:
                 with open(backups_path, "r", encoding="utf-8") as f:
                     backups = json.load(f)
-            except:
+            except Exception:
                 backups = []
 
         backups.append(backup)
@@ -570,9 +612,10 @@ class BackupCommand:
             backups = backups[-10:]
 
         try:
-            backups_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+            backups_path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
             with open(backups_path, "w", encoding="utf-8") as f:
                 json.dump(backups, f, ensure_ascii=False, indent=2)
+            os.chmod(backups_path, 0o755)
             return (
                 f"**AgentMail**: 备份创建成功！\n\n"
                 f"时间: {backup['time']}\n"
@@ -587,8 +630,9 @@ class ConfigCommand:
     """Handler for /agentmail-config command.
 
     Usage:
-        /agentmail-config             # 查看当前配置
-        /agentmail-config --set-mode hybrid|traditional|agentmail
+        /agentmail-config                               # 查看当前配置
+        /agentmail-config --set provider=163 email=xxx@163.com smtp_host=smtp.163.com smtp_port=25 smtp_username=xxx smtp_password=xxx imap_host=imap.163.com imap_port=993 imap_username=xxx imap_password=xxx
+        /agentmail-config --delete                      # 删除配置
     """
 
     command_name = "/agentmail-config"
@@ -597,57 +641,85 @@ class ConfigCommand:
         agent_id = getattr(context, "agent_id", "default")
         args = getattr(context, "args", {})
 
-        set_mode = args.get("set-mode", "")
+        set_args = args.get("set", "")
+        delete = args.get("delete", False)
 
-        data = _get_agent_storage(agent_id)
-        config = data.get("config", {})
+        if delete:
+            res = _api_delete(f"/config/{agent_id}", agent_id)
+            if res.get("success"):
+                return "**AgentMail**: 配置已删除。"
+            return f"**AgentMail**: 删除失败: {res.get('error', '未知错误')}"
 
-        if set_mode:
-            if set_mode not in ["hybrid", "traditional", "agentmail", "none"]:
+        if set_args:
+            config = {}
+            for pair in set_args.split():
+                if "=" in pair:
+                    key, value = pair.split("=", 1)
+                    config[key] = value
+
+            smtp = {}
+            imap = {}
+            for key, value in list(config.items()):
+                if key.startswith("smtp_"):
+                    smtp[key[5:]] = value
+                    del config[key]
+                elif key.startswith("imap_"):
+                    imap[key[5:]] = value
+                    del config[key]
+
+            if smtp:
+                if "port" in smtp:
+                    smtp["port"] = int(smtp["port"])
+                smtp.setdefault("use_tls", True)
+                config["smtp"] = smtp
+            if imap:
+                if "port" in imap:
+                    imap["port"] = int(imap["port"])
+                imap.setdefault("use_ssl", True)
+                config["imap"] = imap
+
+            config.setdefault("receive_protocol", "imap")
+
+            res = _api_post(f"/config/{agent_id}", config, agent_id)
+            if res.get("success"):
                 return (
-                    "**AgentMail**: 无效的模式。可用模式:\n"
-                    "  - `hybrid` - 混合模式（传统邮箱 + AgentMail.to）\n"
-                    "  - `traditional` - 传统邮箱（SMTP/POP3/IMAP）\n"
-                    "  - `agentmail` - AgentMail.to 服务\n"
-                    "  - `none` - 未配置"
+                    f"**AgentMail**: 配置保存成功！\n\n"
+                    f"邮箱: {config.get('email', '未设置')}\n"
+                    f"提供商: {config.get('provider', 'custom')}\n"
+                    f"协议: {config.get('receive_protocol', 'imap').upper()}"
                 )
+            return f"**AgentMail**: 配置保存失败: {res.get('error', '未知错误')}"
 
-            if not config:
-                config = {}
-            config["mode"] = set_mode
-            if set_mode == "hybrid":
-                config["hybrid"] = config.get("hybrid", {"email": "", "password": ""})
-            data["config"] = config
-            _save_agent_storage(agent_id, data)
-            return f"**AgentMail**: 已切换到 **{set_mode}** 模式。"
+        res = _api_get(f"/config/{agent_id}", agent_id)
+        config = res.get("config") if res.get("success") else None
 
         if not config:
             return (
                 "**AgentMail**: 当前未配置邮箱。\n\n"
-                "可用命令:\n"
-                "  `/agentmail-config --set-mode hybrid` - 混合模式\n"
-                "  `/agentmail-config --set-mode traditional` - 传统邮箱\n"
-                "  `/agentmail-config --set-mode agentmail` - AgentMail.to"
+                "配置方法:\n"
+                "```\n"
+                "/agentmail-config --set provider=163 email=xxx@163.com smtp_host=smtp.163.com smtp_port=25 smtp_username=xxx smtp_password=xxx imap_host=imap.163.com imap_port=993 imap_username=xxx imap_password=xxx\n"
+                "```\n\n"
+                "删除配置: `/agentmail-config --delete`"
             )
 
-        mode = config.get("mode", "none")
         lines = ["**AgentMail 当前配置**", ""]
-        lines.append(f"模式: **{mode}**")
+        lines.append(f"邮箱: **{config.get('email', '未设置')}**")
+        lines.append(f"提供商: {config.get('provider', 'custom')}")
+        lines.append(f"显示名: {config.get('display_name', '未设置')}")
+        lines.append(f"接收协议: {config.get('receive_protocol', 'imap').upper()}")
 
-        if mode == "hybrid" and config.get("hybrid"):
-            hybrid = config["hybrid"]
-            lines.append(f"邮箱: {hybrid.get('email', '未设置')}")
-            lines.append(f"提供商: {hybrid.get('provider', '未设置')}")
-        elif mode == "traditional" and config.get("traditional"):
-            trad = config["traditional"]
-            lines.append(f"SMTP: {trad.get('smtp_host', '未设置')}:{trad.get('smtp_port', '')}")
-            lines.append(f"IMAP: {trad.get('imap_host', '未设置')}:{trad.get('imap_port', '')}")
-        elif mode == "agentmail" and config.get("agentmail"):
-            am = config["agentmail"]
-            lines.append(f"API Key: {'已设置' if am.get('api_key') else '未设置'}")
+        smtp = config.get("smtp", {})
+        if smtp:
+            lines.append(f"\n**SMTP**: {smtp.get('host', '')}:{smtp.get('port', '')} (TLS: {'是' if smtp.get('use_tls') else '否'})")
+
+        imap = config.get("imap", {})
+        if imap:
+            lines.append(f"**IMAP**: {imap.get('host', '')}:{imap.get('port', '')} (SSL: {'是' if imap.get('use_ssl') else '否'})")
 
         lines.append("\n---")
-        lines.append("切换模式: `/agentmail-config --set-mode MODE`")
+        lines.append("修改配置: `/agentmail-config --set key=value ...`")
+        lines.append("删除配置: `/agentmail-config --delete`")
 
         return "\n".join(lines)
 
@@ -682,10 +754,8 @@ class SendEmailCommand:
         if body_file:
             try:
                 path = Path(body_file).resolve()
-                # 防止路径遍历：禁止包含 .. 的相对路径
                 if ".." in body_file:
                     return "**AgentMail**: 无效的文件路径，禁止使用相对路径跳转。"
-                # 只允许读取当前工作目录下的文件
                 cwd = Path.cwd().resolve()
                 if not str(path).startswith(str(cwd) + os.sep):
                     return "**AgentMail**: 文件必须在当前工作目录内。"
@@ -696,29 +766,19 @@ class SendEmailCommand:
             except Exception as e:
                 return f"**AgentMail**: 读取文件失败: {e}"
 
-        data = _get_agent_storage(agent_id)
-        if "sent" not in data:
-            data["sent"] = []
-
-        new_email = {
-            "id": max([e.get("id", 0) for e in data["sent"]] + [0]) + 1,
+        res = _api_post(f"/{agent_id}/send", {
             "to_email": to_email,
             "subject": subject,
             "body": body,
-            "date": __import__("datetime").datetime.now().isoformat(),
-            "status": "sent",
-        }
-        data["sent"].append(new_email)
+        }, agent_id)
 
-        if _save_agent_storage(agent_id, data):
+        if res.get("success"):
             return (
                 f"**AgentMail**: 邮件发送成功！\n\n"
                 f"收件人: {to_email}\n"
-                f"主题: {subject}\n"
-                f"[ID: {new_email['id']}]"
+                f"主题: {subject}"
             )
-        else:
-            return "**AgentMail**: 发送失败，无法保存数据。"
+        return f"**AgentMail**: 发送失败: {res.get('error', '未知错误')}"
 
 
 class ReadEmailCommand:
@@ -749,7 +809,6 @@ class ReadEmailCommand:
 
         data = _get_agent_storage(agent_id)
 
-        # 在所有邮件中查找
         email = None
         for e in data.get("inbox", []):
             if e.get("id") == email_id:
@@ -770,7 +829,6 @@ class ReadEmailCommand:
             return f"**AgentMail**: 找不到 ID 为 {email_id} 的邮件。"
 
         if action == "context":
-            # 添加到上下文（sessionStorage）
             email_context = (
                 f"[Email Context]\n"
                 f"From: {email.get('sender_email', email.get('from_email', '未知'))}\n"
@@ -788,17 +846,15 @@ class ReadEmailCommand:
             )
 
         if action == "memory":
-            # 添加到记忆
             memory_key = f"agentmail_memory_{agent_id}"
-            # 记忆路径: ~/.qwenpaw/agents/{agent_id}/mail/memory.json
-            memory_path = Path.home() / ".qwenpaw" / "agents" / agent_id / "mail" / f"{memory_key}.json"
+            memory_path = _get_agent_mail_file(agent_id, f"{memory_key}.json")
 
             memories = []
             if memory_path.exists():
                 try:
                     with open(memory_path, "r", encoding="utf-8") as f:
                         memories = json.load(f)
-                except:
+                except Exception:
                     memories = []
 
             memory = {
@@ -816,14 +872,14 @@ class ReadEmailCommand:
                 memories = memories[-100:]
 
             try:
-                memory_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                memory_path.parent.mkdir(parents=True, exist_ok=True, mode=0o755)
                 with open(memory_path, "w", encoding="utf-8") as f:
                     json.dump(memories, f, ensure_ascii=False, indent=2)
+                os.chmod(memory_path, 0o755)
                 return f"**AgentMail**: 已添加到记忆！\n\n邮件: {email.get('subject', '无主题')}"
             except Exception as e:
                 return f"**AgentMail**: 添加记忆失败: {e}"
 
-        # 默认显示邮件详情
         lines = [
             f"**邮件详情** [ID: {email_id}]",
             "",
@@ -844,3 +900,98 @@ class ReadEmailCommand:
         ]
 
         return "\n".join(lines)
+
+
+class SyncInboxCommand:
+    """Handler for /agentmail-sync command.
+
+    Usage:
+        /agentmail-sync               # 同步收件箱（从IMAP/POP3服务器拉取）
+        /agentmail-sync --max 100      # 最大同步邮件数
+    """
+
+    command_name = "/agentmail-sync"
+
+    async def handle(self, context) -> str:
+        agent_id = getattr(context, "agent_id", "default")
+        args = getattr(context, "args", {})
+
+        max_emails = int(args.get("max", 50))
+
+        res = _api_post(f"/{agent_id}/sync?max_emails={max_emails}", {}, agent_id)
+
+        if res.get("success"):
+            return (
+                f"**AgentMail**: 邮件同步完成！\n\n"
+                f"服务器邮件数: {res.get('total_on_server', 0)}\n"
+                f"新同步: {res.get('synced', 0)} 封\n"
+                f"跳过(已存在): {res.get('skipped', 0)} 封"
+            )
+        return f"**AgentMail**: 同步失败: {res.get('error', '未知错误')}\n\n请先使用 `/agentmail-config` 配置邮箱。"
+
+
+class ListenCommand:
+    """Handler for /agentmail-listen command.
+
+    Usage:
+        /agentmail-listen             # 查看监听状态
+        /agentmail-listen --start     # 启动 IMAP IDLE 实时监听
+        /agentmail-listen --stop      # 停止监听
+    """
+
+    command_name = "/agentmail-listen"
+
+    async def handle(self, context) -> str:
+        agent_id = getattr(context, "agent_id", "default")
+        args = getattr(context, "args", {})
+
+        start = args.get("start", False)
+        stop = args.get("stop", False)
+
+        if start:
+            res = _api_post(f"/{agent_id}/listen/start", {}, agent_id)
+            if res.get("success"):
+                return (
+                    f"**AgentMail**: IMAP IDLE 监听已启动！\n\n"
+                    f"新邮件到达时将自动保存到收件箱并通知 Agent。\n"
+                    f"无需轮询，节省资源。"
+                )
+            return f"**AgentMail**: 启动监听失败: {res.get('error', '未知错误')}\n\n请先使用 `/agentmail-config` 配置 IMAP 邮箱。"
+
+        if stop:
+            res = _api_post(f"/{agent_id}/listen/stop", {}, agent_id)
+            if res.get("success"):
+                return "**AgentMail**: IMAP IDLE 监听已停止。"
+            return f"**AgentMail**: 停止监听失败: {res.get('error', '未知错误')}"
+
+        res = _api_get(f"/{agent_id}/listen/status", agent_id)
+        if res.get("listening"):
+            return (
+                f"**AgentMail IMAP IDLE 监听状态**\n\n"
+                f"状态: 🟢 监听中\n"
+                f"邮箱: {res.get('email', '未知')}\n\n"
+                f"停止监听: `/agentmail-listen --stop`"
+            )
+        else:
+            return (
+                f"**AgentMail IMAP IDLE 监听状态**\n\n"
+                f"状态: ⚪ 未监听\n\n"
+                f"启动监听: `/agentmail-listen --start`\n"
+                f"（需要先配置 IMAP 邮箱）"
+            )
+
+
+ALL_COMMANDS = [
+    ListContactsCommand,
+    ShareContactsCommand,
+    ListInboxCommand,
+    ListSentCommand,
+    ListDraftsCommand,
+    ListTrashCommand,
+    BackupCommand,
+    ConfigCommand,
+    SendEmailCommand,
+    ReadEmailCommand,
+    SyncInboxCommand,
+    ListenCommand,
+]
